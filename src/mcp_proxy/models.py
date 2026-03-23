@@ -18,6 +18,9 @@ def _split_command(v: Any) -> list[str] | None:
     raise TypeError("command must be a string or list of strings")
 
 
+HttpTransport = Literal["streamable-http", "sse"]
+
+
 class UpstreamServer(BaseModel):
     """One MCP upstream definition persisted under /data/config/servers.json."""
 
@@ -26,7 +29,14 @@ class UpstreamServer(BaseModel):
     type: Literal["stdio", "http"]
     display_name: str | None = Field(default=None, description="Optional label in admin UI")
 
-    url: str | None = Field(default=None, description="MCP HTTP endpoint (streamable HTTP base URL)")
+    url: str | None = Field(
+        default=None,
+        description="For type=http: MCP endpoint URL (streamable HTTP path or legacy SSE URL).",
+    )
+    http_transport: HttpTransport | None = Field(
+        default=None,
+        description="For type=http only: streamable-http (POST+GET /mcp) or sse (legacy HTTP+SSE).",
+    )
     headers: dict[str, str] = Field(default_factory=dict)
 
     command: list[str] | None = Field(default=None, description="stdio argv")
@@ -65,11 +75,14 @@ class UpstreamServer(BaseModel):
             self.command = None
             self.cwd = None
             self.env = {}
+            if self.http_transport is None:
+                self.http_transport = "streamable-http"
         else:
             if not self.command:
                 raise ValueError("command is required for stdio servers (non-empty argv)")
             self.url = None
             self.headers = {}
+            self.http_transport = None
         return self
 
 

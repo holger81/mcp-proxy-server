@@ -25,7 +25,7 @@ docker compose up -d --build
 
 Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
 
-On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. JSON API: **`GET/POST /api/servers`**, **`DELETE /api/servers/{id}`**.
+On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. JSON API: **`GET/POST /api/servers`**, **`DELETE /api/servers/{id}`**. For each server, **`GET /api/servers/{id}/inspect?kind=tools|resources|prompts|capabilities`** runs a short MCP session and returns **`list_tools`**, **`list_resources`**, **`list_prompts`**, or the **`initialize`** result. HTTP upstreams can use **`http_transport`: `streamable-http`** (default) or **`sse`** (legacy).
 
 ## Use with Portainer
 

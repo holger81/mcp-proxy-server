@@ -12,7 +12,7 @@
         background: #121218;
       }
       body {
-        max-width: 52rem;
+        max-width: 56rem;
         margin: 2rem auto;
         padding: 0 1.25rem 3rem;
       }
@@ -22,7 +22,7 @@
       }
       h2 {
         font-size: 1.1rem;
-        margin-top: 2rem;
+        margin-top: 1.25rem;
         font-weight: 600;
       }
       a {
@@ -89,17 +89,32 @@
       button:hover {
         background: #4d6ab4;
       }
+      button.tab {
+        margin-top: 0;
+        background: #252530;
+        color: #c8c8d8;
+      }
+      button.tab.active {
+        background: #3d5a9e;
+        color: #fff;
+      }
       button.secondary {
         background: #333344;
       }
       button.secondary:hover {
         background: #44445a;
       }
+      button.small {
+        margin-top: 0.25rem;
+        margin-right: 0.35rem;
+        padding: 0.3rem 0.55rem;
+        font-size: 0.8rem;
+      }
       button.danger {
         background: #6b2d3a;
-        margin-top: 0;
-        padding: 0.35rem 0.65rem;
-        font-size: 0.85rem;
+        margin-top: 0.25rem;
+        padding: 0.3rem 0.55rem;
+        font-size: 0.8rem;
       }
       button.danger:hover {
         background: #843444;
@@ -149,70 +164,105 @@
         color: #a0a0b8;
         font-size: 0.9rem;
       }
+      .tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1.25rem 0 0.5rem;
+        flex-wrap: wrap;
+      }
+      #inspect-out {
+        margin-top: 1rem;
+        max-height: 28rem;
+        overflow: auto;
+      }
     </style>
   </head>
   <body>
     <h1>MCP Proxy</h1>
     <p>
-      Upstream servers are stored under <code>/data/config/servers.json</code> in the container.
-      MCP aggregation on <code>/mcp</code> is not wired yet; this page only manages the registry.
+      Registry: <code>/data/config/servers.json</code>. Inspect calls open a short-lived MCP session to the upstream
+      (stdio, streamable HTTP, or legacy SSE).
     </p>
     <p><a href="/api/health"><code>/api/health</code></a></p>
 
-    <h2>Configured servers</h2>
-    <div id="list-wrap">
-      <p id="list-empty" class="hint hidden">No servers yet. Add one below.</p>
-      <table id="srv-table" class="hidden">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Type</th>
-            <th>Target</th>
-            <th>On</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="srv-body"></tbody>
-      </table>
-    </div>
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
+      <button type="button" class="tab" data-tab="explore" role="tab" aria-selected="false">Explore servers</button>
+    </nav>
 
-    <h2>Add MCP server</h2>
-    <form id="add-form">
-      <label for="f-id">Server ID <span class="hint">(lowercase, e.g. <code>fetch-mcp</code>)</span></label>
-      <input id="f-id" name="id" type="text" required autocomplete="off" placeholder="my-upstream" />
+    <section id="panel-register" role="tabpanel">
+      <h2>Add MCP server</h2>
+      <form id="add-form">
+        <label for="f-id">Server ID <span class="hint">(lowercase slug)</span></label>
+        <input id="f-id" name="id" type="text" required autocomplete="off" placeholder="my-upstream" />
 
-      <label for="f-name">Display name <span class="hint">(optional)</span></label>
-      <input id="f-name" name="display_name" type="text" autocomplete="off" placeholder="My upstream" />
+        <label for="f-name">Display name <span class="hint">(optional)</span></label>
+        <input id="f-name" name="display_name" type="text" autocomplete="off" placeholder="My upstream" />
 
-      <div class="row">
-        <label><input type="radio" name="type" value="http" checked /> HTTP (remote MCP URL)</label>
-        <label><input type="radio" name="type" value="stdio" /> stdio (command)</label>
-        <label><input type="checkbox" id="f-enabled" checked /> Enabled</label>
+        <div class="row">
+          <label><input type="radio" name="type" value="http" checked /> HTTP</label>
+          <label><input type="radio" name="type" value="stdio" /> stdio</label>
+          <label><input type="checkbox" id="f-enabled" checked /> Enabled</label>
+        </div>
+
+        <fieldset id="blk-http">
+          <legend>HTTP</legend>
+          <div class="row">
+            <label><input type="radio" name="http_transport" value="streamable-http" checked /> Streamable HTTP</label>
+            <label><input type="radio" name="http_transport" value="sse" /> Legacy HTTP + SSE</label>
+          </div>
+          <p class="hint">
+            Streamable HTTP: single MCP URL (often <code>…/mcp</code>) with POST+GET. SSE: URL of the server’s SSE
+            endpoint (older transport).
+          </p>
+          <label for="f-url">MCP endpoint URL</label>
+          <input id="f-url" type="text" placeholder="http://other-container:8080/mcp" />
+          <label for="f-headers">Headers (JSON object, optional)</label>
+          <textarea id="f-headers" placeholder='{"Authorization": "Bearer …"}'></textarea>
+        </fieldset>
+
+        <fieldset id="blk-stdio" class="hidden">
+          <legend>stdio</legend>
+          <label for="f-cmd">Command</label>
+          <input id="f-cmd" type="text" placeholder='python -m mcp_server' />
+          <p class="hint">Shell-style quoting supported.</p>
+          <label for="f-cwd">Working directory (optional)</label>
+          <input id="f-cwd" type="text" placeholder="/data/venvs/myserver" />
+          <label for="f-env">Environment (JSON object, optional)</label>
+          <textarea id="f-env" placeholder='{"KEY": "value"}'></textarea>
+        </fieldset>
+
+        <button type="submit">Add server</button>
+      </form>
+      <div id="form-msg"></div>
+    </section>
+
+    <section id="panel-explore" class="hidden" role="tabpanel">
+      <h2>Configured servers</h2>
+      <p class="hint">
+        <strong>Tools</strong> → <code>tools/list</code>. <strong>Resources</strong> → <code>resources/list</code> (URIs /
+        roots). <strong>Prompts</strong> → <code>prompts/list</code> (templates). <strong>Capabilities</strong> → MCP
+        <code>initialize</code> result (protocol features / “signals” from the handshake).
+      </p>
+      <div id="list-wrap">
+        <p id="list-empty" class="hint hidden">No servers yet. Use <em>Register server</em>.</p>
+        <table id="srv-table" class="hidden">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Type</th>
+              <th>HTTP mode</th>
+              <th>Target</th>
+              <th>Inspect</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="srv-body"></tbody>
+        </table>
       </div>
-
-      <fieldset id="blk-http">
-        <legend>HTTP</legend>
-        <label for="f-url">MCP endpoint URL</label>
-        <input id="f-url" type="text" placeholder="http://other-container:8080/mcp" />
-        <p class="hint">Streamable HTTP base path your upstream exposes (often ends with <code>/mcp</code>).</p>
-        <label for="f-headers">Headers (JSON object, optional)</label>
-        <textarea id="f-headers" placeholder='{"Authorization": "Bearer …"}'></textarea>
-      </fieldset>
-
-      <fieldset id="blk-stdio" class="hidden">
-        <legend>stdio</legend>
-        <label for="f-cmd">Command</label>
-        <input id="f-cmd" type="text" placeholder='python -m mcp_server' />
-        <p class="hint">Parsed with shell rules (quoted args supported). Or use JSON array in API.</p>
-        <label for="f-cwd">Working directory (optional)</label>
-        <input id="f-cwd" type="text" placeholder="/data/venvs/myserver" />
-        <label for="f-env">Environment (JSON object, optional)</label>
-        <textarea id="f-env" placeholder='{"KEY": "value"}'></textarea>
-      </fieldset>
-
-      <button type="submit">Add server</button>
-    </form>
-    <div id="form-msg"></div>
+      <h2>Query result</h2>
+      <pre id="inspect-out" class="hidden"></pre>
+    </section>
 
     <script>
       (function () {
@@ -224,6 +274,9 @@
         const formMsg = document.getElementById("form-msg");
         const blkHttp = document.getElementById("blk-http");
         const blkStdio = document.getElementById("blk-stdio");
+        const inspectOut = document.getElementById("inspect-out");
+        const panelReg = document.getElementById("panel-register");
+        const panelExp = document.getElementById("panel-explore");
 
         function parseJsonObject(text, label) {
           const t = (text || "").trim();
@@ -244,6 +297,26 @@
           const c = s.command;
           if (Array.isArray(c)) return c.join(" ");
           return "—";
+        }
+
+        function httpMode(s) {
+          if (s.type !== "http") return "—";
+          const t = s.http_transport || "streamable-http";
+          if (t === "sse") return "SSE";
+          return "Streamable";
+        }
+
+        async function runInspect(serverId, kind) {
+          inspectOut.classList.remove("hidden");
+          inspectOut.textContent = "Loading…";
+          const url = api + "/" + encodeURIComponent(serverId) + "/inspect?kind=" + encodeURIComponent(kind);
+          const res = await fetch(url);
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            inspectOut.textContent = JSON.stringify({ error: data.detail || data }, null, 2);
+            return;
+          }
+          inspectOut.textContent = JSON.stringify(data, null, 2);
         }
 
         async function loadServers() {
@@ -269,6 +342,8 @@
             tdId.textContent = s.id;
             const tdType = document.createElement("td");
             tdType.textContent = s.type;
+            const tdHttp = document.createElement("td");
+            tdHttp.textContent = httpMode(s);
             const tdTgt = document.createElement("td");
             const pre = document.createElement("pre");
             pre.style.margin = "0";
@@ -276,8 +351,21 @@
             pre.style.padding = "0";
             pre.textContent = targetCell(s);
             tdTgt.appendChild(pre);
-            const tdOn = document.createElement("td");
-            tdOn.textContent = s.enabled ? "yes" : "no";
+            const tdIn = document.createElement("td");
+            const kinds = [
+              ["tools", "Tools"],
+              ["resources", "Resources"],
+              ["prompts", "Prompts"],
+              ["capabilities", "Capabilities"],
+            ];
+            for (const [kind, label] of kinds) {
+              const b = document.createElement("button");
+              b.type = "button";
+              b.className = "small secondary";
+              b.textContent = label;
+              b.addEventListener("click", () => runInspect(s.id, kind));
+              tdIn.appendChild(b);
+            }
             const tdAct = document.createElement("td");
             const del = document.createElement("button");
             del.type = "button";
@@ -293,10 +381,24 @@
               loadServers();
             });
             tdAct.appendChild(del);
-            tr.append(tdId, tdType, tdTgt, tdOn, tdAct);
+            tr.append(tdId, tdType, tdHttp, tdTgt, tdIn, tdAct);
             tbody.appendChild(tr);
           }
         }
+
+        document.querySelectorAll("button.tab").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const tab = btn.getAttribute("data-tab");
+            document.querySelectorAll("button.tab").forEach((b) => {
+              const on = b.getAttribute("data-tab") === tab;
+              b.classList.toggle("active", on);
+              b.setAttribute("aria-selected", on ? "true" : "false");
+            });
+            panelReg.classList.toggle("hidden", tab !== "register");
+            panelExp.classList.toggle("hidden", tab !== "explore");
+            if (tab === "explore") loadServers();
+          });
+        });
 
         document.querySelectorAll('input[name="type"]').forEach((r) => {
           r.addEventListener("change", () => {
@@ -318,7 +420,8 @@
             if (type === "http") {
               const url = document.getElementById("f-url").value.trim();
               const headers = parseJsonObject(document.getElementById("f-headers").value, "Headers");
-              body = { id, type: "http", enabled, display_name, url, headers };
+              const http_transport = form.querySelector('input[name="http_transport"]:checked').value;
+              body = { id, type: "http", enabled, display_name, url, headers, http_transport };
             } else {
               const cmd = document.getElementById("f-cmd").value.trim();
               const cwd = document.getElementById("f-cwd").value.trim() || null;
@@ -350,6 +453,7 @@
           form.reset();
           document.getElementById("f-enabled").checked = true;
           form.querySelector('input[name="type"][value="http"]').checked = true;
+          form.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
           blkHttp.classList.remove("hidden");
           blkStdio.classList.add("hidden");
           loadServers();
