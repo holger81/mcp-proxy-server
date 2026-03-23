@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.models import UpstreamServer
-from mcp_proxy.upstream_inspect import run_inspect_with_timeout
+from mcp_proxy.upstream_inspect import run_inspect_with_timeout, upstream_error_detail
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
@@ -81,4 +81,4 @@ async def inspect_upstream(
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        raise HTTPException(status_code=502, detail=upstream_error_detail(e)) from e

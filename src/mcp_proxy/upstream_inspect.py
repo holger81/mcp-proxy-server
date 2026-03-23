@@ -18,6 +18,48 @@ from mcp_proxy.models import UpstreamServer
 InspectKind = Literal["tools", "resources", "prompts", "capabilities"]
 
 
+def _is_wrapper_message(text: str) -> bool:
+    t = text.lower()
+    return (
+        "taskgroup" in t
+        or "exceptiongroup" in t
+        or "sub-exception" in t
+        or "unhandled errors" in t
+    )
+
+
+def upstream_error_detail(exc: BaseException, *, _seen: set[int] | None = None) -> str:
+    """Flatten TaskGroup / ExceptionGroup so API clients see the real MCP/HTTP error."""
+    if _seen is None:
+        _seen = set()
+    eid = id(exc)
+    if eid in _seen:
+        return str(exc).strip() or type(exc).__name__
+    _seen.add(eid)
+
+    if isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        nested: list[str] = []
+        for sub in exc.exceptions[:8]:
+            part = upstream_error_detail(sub, _seen=_seen)
+            if part and not _is_wrapper_message(part):
+                nested.append(part)
+        if nested:
+            return nested[0] if len(nested) == 1 else " | ".join(nested)
+        return upstream_error_detail(exc.exceptions[0], _seen=_seen)
+
+    top = str(exc).strip()
+    for inner in (exc.__cause__, getattr(exc, "__context__", None)):
+        if inner is None or id(inner) in _seen:
+            continue
+        deep = upstream_error_detail(inner, _seen=_seen)
+        if _is_wrapper_message(top):
+            return deep or top or type(exc).__name__
+        if deep and deep not in top:
+            return f"{top}: {deep}" if top else deep
+
+    return top or type(exc).__name__
+
+
 @asynccontextmanager
 async def _upstream_streams(
     server: UpstreamServer,
