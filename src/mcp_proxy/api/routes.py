@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
+from mcp_proxy.api.servers import router as servers_router
+
 router = APIRouter(tags=["api"])
+router.include_router(servers_router)
 
 
 @router.get("/health")

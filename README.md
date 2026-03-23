@@ -21,6 +21,8 @@ docker compose up -d --build
 
 Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
 
+On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. JSON API: **`GET/POST /api/servers`**, **`DELETE /api/servers/{id}`**.
+
 ## Use with Portainer
 
 1. Commit and push this repo to Git (e.g. GitHub).

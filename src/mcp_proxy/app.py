@@ -1,11 +1,20 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from mcp_proxy.api.routes import router as api_router
+from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.settings import Settings
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings: Settings = app.state.settings
+    (settings.data_dir / "config").mkdir(parents=True, exist_ok=True)
+    yield
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -14,10 +23,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="MCP Proxy",
         version="0.1.0",
         description="Aggregates upstream MCP servers; Streamable HTTP on /mcp.",
+        lifespan=lifespan,
     )
     app.state.settings = settings
+    app.state.server_store = ServerConfigStore(settings.data_dir)
 
     app.include_router(api_router, prefix="/api")
+
+    @app.get("/")
+    async def root() -> RedirectResponse:
+        """Bare host:port hits `/`; send users to the admin UI."""
+        return RedirectResponse(url="/admin/", status_code=307)
 
     @app.get("/mcp")
     async def mcp_get() -> JSONResponse:
