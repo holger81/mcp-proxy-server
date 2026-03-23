@@ -57,6 +57,18 @@ class ServerConfigStore:
             self._write_unlocked(doc)
             return True
 
+    def update(self, server_id: str, server: UpstreamServer) -> None:
+        if server.id != server_id:
+            raise ValueError("server id in body must match URL path")
+        with self._lock:
+            doc = self._read_raw()
+            for i, s in enumerate(doc.servers):
+                if s.id == server_id:
+                    doc.servers[i] = server
+                    self._write_unlocked(doc)
+                    return
+            raise KeyError(server_id)
+
     def _write_unlocked(self, doc: ServerListFile) -> None:
         self._config_dir.mkdir(parents=True, exist_ok=True)
         payload = doc.model_dump(mode="json")

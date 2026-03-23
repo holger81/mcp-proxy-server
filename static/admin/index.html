@@ -175,6 +175,35 @@
         max-height: 28rem;
         overflow: auto;
       }
+      dialog {
+        border: 1px solid #3a3a4a;
+        border-radius: 10px;
+        background: #16161e;
+        color: #e8e8ef;
+        max-width: 34rem;
+        width: calc(100vw - 2rem);
+        padding: 0;
+      }
+      dialog::backdrop {
+        background: rgba(0, 0, 0, 0.55);
+      }
+      .dialog-inner {
+        padding: 1rem 1.25rem 1.25rem;
+        max-height: 85vh;
+        overflow-y: auto;
+      }
+      .dialog-inner h2 {
+        margin-top: 0;
+      }
+      .dialog-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+      }
+      .dialog-actions button {
+        margin-top: 0;
+      }
     </style>
   </head>
   <body>
@@ -254,7 +283,7 @@
               <th>HTTP mode</th>
               <th>Target</th>
               <th>Inspect</th>
-              <th></th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="srv-body"></tbody>
@@ -263,6 +292,53 @@
       <h2>Query result</h2>
       <pre id="inspect-out" class="hidden"></pre>
     </section>
+
+    <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
+      <div class="dialog-inner">
+        <h2 id="edit-dialog-title">Edit server</h2>
+        <form id="edit-form">
+          <label for="e-id">Server ID <span class="hint">(cannot change)</span></label>
+          <input id="e-id" type="text" readonly autocomplete="off" style="opacity: 0.85" />
+
+          <label for="e-name">Display name <span class="hint">(optional)</span></label>
+          <input id="e-name" type="text" autocomplete="off" />
+
+          <div class="row">
+            <label><input type="radio" name="e-type" value="http" /> HTTP</label>
+            <label><input type="radio" name="e-type" value="stdio" /> stdio</label>
+            <label><input type="checkbox" id="e-enabled" /> Enabled</label>
+          </div>
+
+          <fieldset id="e-blk-http">
+            <legend>HTTP</legend>
+            <div class="row">
+              <label><input type="radio" name="e-http_transport" value="streamable-http" /> Streamable HTTP</label>
+              <label><input type="radio" name="e-http_transport" value="sse" /> Legacy HTTP + SSE</label>
+            </div>
+            <label for="e-url">MCP endpoint URL</label>
+            <input id="e-url" type="text" />
+            <label for="e-headers">Headers (JSON object, optional)</label>
+            <textarea id="e-headers"></textarea>
+          </fieldset>
+
+          <fieldset id="e-blk-stdio" class="hidden">
+            <legend>stdio</legend>
+            <label for="e-cmd">Command</label>
+            <input id="e-cmd" type="text" />
+            <label for="e-cwd">Working directory (optional)</label>
+            <input id="e-cwd" type="text" />
+            <label for="e-env">Environment (JSON object, optional)</label>
+            <textarea id="e-env"></textarea>
+          </fieldset>
+
+          <div id="edit-msg"></div>
+          <div class="dialog-actions">
+            <button type="button" class="secondary" id="edit-cancel">Cancel</button>
+            <button type="submit">Save changes</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
 
     <script>
       (function () {
@@ -277,6 +353,11 @@
         const inspectOut = document.getElementById("inspect-out");
         const panelReg = document.getElementById("panel-register");
         const panelExp = document.getElementById("panel-explore");
+        const editDialog = document.getElementById("edit-dialog");
+        const editForm = document.getElementById("edit-form");
+        const editMsg = document.getElementById("edit-msg");
+        const eBlkHttp = document.getElementById("e-blk-http");
+        const eBlkStdio = document.getElementById("e-blk-stdio");
 
         function parseJsonObject(text, label) {
           const t = (text || "").trim();
@@ -305,6 +386,89 @@
           if (t === "sse") return "SSE";
           return "Streamable";
         }
+
+        function commandToString(cmd) {
+          if (!cmd) return "";
+          if (Array.isArray(cmd)) return cmd.join(" ");
+          return String(cmd);
+        }
+
+        function openEdit(s) {
+          editMsg.innerHTML = "";
+          document.getElementById("e-id").value = s.id;
+          document.getElementById("e-name").value = s.display_name || "";
+          document.getElementById("e-enabled").checked = !!s.enabled;
+          editForm.querySelectorAll('input[name="e-type"]').forEach((el) => {
+            el.checked = el.value === s.type;
+          });
+          eBlkHttp.classList.toggle("hidden", s.type !== "http");
+          eBlkStdio.classList.toggle("hidden", s.type !== "stdio");
+          const ht = s.http_transport === "sse" ? "sse" : "streamable-http";
+          editForm.querySelectorAll('input[name="e-http_transport"]').forEach((el) => {
+            el.checked = el.value === ht;
+          });
+          document.getElementById("e-url").value = s.url || "";
+          document.getElementById("e-headers").value = JSON.stringify(s.headers && Object.keys(s.headers).length ? s.headers : {}, null, 2);
+          document.getElementById("e-cmd").value = commandToString(s.command);
+          document.getElementById("e-cwd").value = s.cwd || "";
+          document.getElementById("e-env").value = JSON.stringify(s.env && Object.keys(s.env).length ? s.env : {}, null, 2);
+          editDialog.showModal();
+        }
+
+        document.getElementById("edit-cancel").addEventListener("click", () => editDialog.close());
+
+        document.querySelectorAll('input[name="e-type"]').forEach((r) => {
+          r.addEventListener("change", () => {
+            const t = editForm.querySelector('input[name="e-type"]:checked').value;
+            eBlkHttp.classList.toggle("hidden", t !== "http");
+            eBlkStdio.classList.toggle("hidden", t !== "stdio");
+          });
+        });
+
+        editForm.addEventListener("submit", async (ev) => {
+          ev.preventDefault();
+          editMsg.innerHTML = "";
+          const id = document.getElementById("e-id").value.trim();
+          const display_name = document.getElementById("e-name").value.trim() || null;
+          const type = editForm.querySelector('input[name="e-type"]:checked').value;
+          const enabled = document.getElementById("e-enabled").checked;
+          let body;
+          try {
+            if (type === "http") {
+              const url = document.getElementById("e-url").value.trim();
+              const headers = parseJsonObject(document.getElementById("e-headers").value, "Headers");
+              const http_transport = editForm.querySelector('input[name="e-http_transport"]:checked').value;
+              body = { id, type: "http", enabled, display_name, url, headers, http_transport };
+            } else {
+              const cmd = document.getElementById("e-cmd").value.trim();
+              const cwd = document.getElementById("e-cwd").value.trim() || null;
+              const env = parseJsonObject(document.getElementById("e-env").value, "Environment");
+              body = { id, type: "stdio", enabled, display_name, command: cmd, cwd, env };
+            }
+          } catch (e) {
+            editMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            return;
+          }
+          const res = await fetch(api + "/" + encodeURIComponent(id), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = data.detail;
+            const msg =
+              typeof detail === "string"
+                ? detail
+                : Array.isArray(detail)
+                  ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+                  : JSON.stringify(data);
+            editMsg.innerHTML = '<div class="msg err">' + msg + "</div>";
+            return;
+          }
+          editDialog.close();
+          loadServers();
+        });
 
         async function runInspect(serverId, kind) {
           inspectOut.classList.remove("hidden");
@@ -367,6 +531,12 @@
               tdIn.appendChild(b);
             }
             const tdAct = document.createElement("td");
+            const editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "small secondary";
+            editBtn.textContent = "Edit";
+            editBtn.addEventListener("click", () => openEdit(s));
+            tdAct.appendChild(editBtn);
             const del = document.createElement("button");
             del.type = "button";
             del.className = "danger";

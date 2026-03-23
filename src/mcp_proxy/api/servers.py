@@ -39,6 +39,23 @@ async def delete_server(request: Request, server_id: str) -> Response:
     return Response(status_code=204)
 
 
+@router.put("/{server_id}")
+async def update_server(request: Request, server_id: str, body: UpstreamServer) -> dict:
+    if body.id != server_id:
+        raise HTTPException(
+            status_code=400,
+            detail="JSON id must match the URL path (server id cannot be changed here)",
+        )
+    store = _store(request)
+    try:
+        store.update(server_id, body)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="server not found") from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return body.model_dump(mode="json")
+
+
 @router.get("/{server_id}/inspect")
 async def inspect_upstream(
     request: Request,
