@@ -8,10 +8,14 @@ FastAPI app that will aggregate MCP upstreams. Scaffold includes:
 
 ## Run with Docker
 
+The image starts as **root** only to `mkdir` **`/data/config`** and **`chown`** the **`/data`** volume to **`appuser` (uid 1000)**, then runs Uvicorn as that user. This avoids `PermissionError` on empty named volumes (e.g. Portainer).
+
 ```bash
 docker build -t mcp-proxy .
 docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 ```
+
+If you force **`docker run --user`** and the volume is not writable by that uid, startup may still fail—use the default entrypoint or pre-chown **`/data`** on the host.
 
 Or with Compose:
 
