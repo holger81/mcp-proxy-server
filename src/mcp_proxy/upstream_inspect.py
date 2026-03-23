@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Literal
 
@@ -117,11 +118,13 @@ async def _run_inspect_stateless_post(server: UpstreamServer, kind: InspectKind)
         capabilities=mcp_types.ClientCapabilities(),
         client_info=mcp_types.Implementation(name="mcp-proxy-admin", version="0.1.0"),
     )
+    # Wire format must use camelCase (protocolVersion, clientInfo). model_dump(mode="json")
+    # can still emit snake_case; model_dump_json(by_alias=True) matches MCP / Home Assistant.
     init_body = {
         "jsonrpc": "2.0",
         "id": next(ids),
         "method": "initialize",
-        "params": init_params.model_dump(mode="json", by_alias=True, exclude_none=True),
+        "params": json.loads(init_params.model_dump_json(by_alias=True, exclude_none=True)),
     }
 
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
