@@ -1,0 +1,15 @@
+services:
+  mcp-proxy:
+    build: .
+    image: mcp-proxy:latest
+    ports:
+      - "2222:8080"
+    volumes:
+      - mcp-proxy-data:/data
+    environment:
+      MCP_PROXY_DATA_DIR: /data
+      MCP_PROXY_STATIC_ROOT: /app/static
+    restart: unless-stopped
+
+volumes:
+  mcp-proxy-data:
