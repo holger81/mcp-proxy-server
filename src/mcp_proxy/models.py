@@ -18,7 +18,7 @@ def _split_command(v: Any) -> list[str] | None:
     raise TypeError("command must be a string or list of strings")
 
 
-HttpTransport = Literal["streamable-http", "sse"]
+HttpTransport = Literal["streamable-http", "sse", "stateless-post"]
 
 
 class UpstreamServer(BaseModel):
@@ -35,7 +35,10 @@ class UpstreamServer(BaseModel):
     )
     http_transport: HttpTransport | None = Field(
         default=None,
-        description="For type=http only: streamable-http (POST+GET /mcp) or sse (legacy HTTP+SSE).",
+        description=(
+            "For type=http: streamable-http (full MCP streamable client), "
+            "sse (legacy HTTP+SSE), or stateless-post (one JSON-RPC per POST, e.g. Home Assistant /api/mcp)."
+        ),
     )
     headers: dict[str, str] = Field(default_factory=dict)
 
