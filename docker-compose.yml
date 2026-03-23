@@ -1,7 +1,9 @@
 services:
   mcp-proxy:
     build: .
+    # Local tag only — not on Docker Hub. Prevents `compose pull` / Portainer “Pull” from hitting the registry.
     image: mcp-proxy:latest
+    pull_policy: never
     ports:
       - "2222:8080"
     volumes:

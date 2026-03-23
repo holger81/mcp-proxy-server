@@ -32,9 +32,9 @@ On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) 
 1. Commit and push this repo to Git (e.g. GitHub).
 2. In **Portainer** → **Stacks** → **Add stack** → **Repository** (or **Web editor**):
    - Point **Repository URL** at your repo and set the **Compose path** to `docker-compose.yml`, **or** paste the contents of `docker-compose.yml`.
-3. Deploy. The stack publishes the app on host port **2222** (container still listens on **8080**). Data persists in the **`mcp-proxy-data`** Docker volume (config/venvs once you add those features).
+3. **Deploy / update via build**, not a registry pull: **`mcp-proxy:latest`** is only a **local** tag after `docker compose build`. The stack sets **`pull_policy: never`** so Compose should not try to pull it from Docker Hub. In Portainer, avoid relying on **“Pull”** alone for this service—use **redeploy with rebuild** (or equivalent) so the image is built from the Dockerfile. The app is on host port **2222** (container **8080**). Data persists in the **`mcp-proxy-data`** volume.
 
-If your Portainer environment cannot build from Git, build the image elsewhere, push to a registry, and replace `build: .` in the stack with `image: your-registry/mcp-proxy:tag`.
+If your Portainer environment cannot build from Git, build the image elsewhere, push to a registry, and replace `build: .` in the stack with `image: your-registry/mcp-proxy:tag` (and remove or change **`pull_policy`** as needed).
 
 ## Configuration (environment)
 
