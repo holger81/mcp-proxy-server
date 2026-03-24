@@ -56,5 +56,20 @@ def list_merged_presets(data_dir: Path) -> list[McpCatalogPreset]:
     return [merged[i] for i in order]
 
 
+def _expand_data_dir_placeholders(d: dict, root: str) -> dict:
+    """Replace {DATA_DIR} in catalog strings (matches MCP_PROXY_DATA_DIR / volume mount)."""
+    for key in ("command", "cwd"):
+        v = d.get(key)
+        if isinstance(v, str) and "{DATA_DIR}" in v:
+            d[key] = v.replace("{DATA_DIR}", root)
+    return d
+
+
 def presets_as_json(data_dir: Path) -> list[dict]:
-    return [p.model_dump_public() for p in list_merged_presets(data_dir)]
+    root = str(data_dir.resolve())
+    out: list[dict] = []
+    for p in list_merged_presets(data_dir):
+        d = dict(p.model_dump_public())
+        _expand_data_dir_placeholders(d, root)
+        out.append(d)
+    return out

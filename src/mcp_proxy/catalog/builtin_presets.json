@@ -2,14 +2,14 @@
   {
     "id": "unifi-mcp-server",
     "display_name": "UniFi MCP Server",
-    "description": "UniFi Network Controller API over MCP. Install on the host or image (pip install unifi-mcp-server), then set your API key and gateway below.",
+    "description": "Use Install PyPI package first (venv unifi), then add this server. Command must be the venv binary, not plain unifi-mcp-server (not on PATH in the container). Fill UNIFI_API_KEY and UNIFI_LOCAL_HOST.",
     "source_url": "https://github.com/enuno/unifi-mcp-server",
     "package_hint": "Admin: use “Install PyPI package” below, or pip install unifi-mcp-server on the proxy host",
     "install_venv_id": "unifi",
     "install_package": "unifi-mcp-server",
     "type": "stdio",
     "default_server_id": "unifi",
-    "command": "unifi-mcp-server",
+    "command": "{DATA_DIR}/venvs/unifi/bin/unifi-mcp-server",
     "cwd": null,
     "env": {
       "UNIFI_API_KEY": "",

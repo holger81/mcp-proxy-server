@@ -716,6 +716,7 @@
             if (data.suggested_command) {
               lastSuggestedCommand = data.suggested_command;
               installApplyCmd.classList.remove("hidden");
+              document.getElementById("f-cmd").value = data.suggested_command;
             }
           } catch (e) {
             installPypiLog.textContent = String((e && e.message) || e);
