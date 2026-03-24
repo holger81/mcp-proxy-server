@@ -209,14 +209,11 @@
   <body>
     <h1>MCP Proxy</h1>
     <p>
-      Registry: <code>/data/config/servers.json</code>. Inspect calls open a short-lived MCP session to the upstream
-      (stdio, streamable HTTP, or legacy SSE).
+      Config: <code>/data/config/servers.json</code>. Stdio MCP servers are installed via PyPI or npm below (under
+      <code>/data/venvs</code> or <code>/data/npm</code>). Remote servers use the HTTP form. Inspect runs a short MCP
+      session to the upstream.
     </p>
-    <p>
-      <a href="/api/health"><code>/api/health</code></a> ·
-      <a href="/api/catalog/presets"><code>/api/catalog/presets</code></a> ·
-      <a href="/docs"><code>API docs</code></a> (includes <code>POST /api/venvs/install-pypi</code>)
-    </p>
+    <p><a href="/api/health"><code>/api/health</code></a> · <a href="/docs"><code>API docs</code></a></p>
 
     <nav class="tabs" role="tablist">
       <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
@@ -224,42 +221,39 @@
     </nav>
 
     <section id="panel-register" role="tabpanel">
-      <h2>Add MCP server</h2>
-      <fieldset id="blk-catalog">
-        <legend>Add from catalog</legend>
-        <label for="catalog-preset">Preset</label>
-        <select id="catalog-preset" autocomplete="off">
-          <option value="">— Custom (manual) —</option>
-        </select>
-        <p id="catalog-hint" class="hint hidden"></p>
-      </fieldset>
-      <fieldset id="blk-install-pypi">
-        <legend>Install PyPI package (stdio servers)</legend>
+      <h2>Install stdio MCP (PyPI or npm)</h2>
+      <fieldset>
+        <legend>Package install + register</legend>
         <p class="hint">
-          Creates <code>/data/venvs/&lt;venv id&gt;</code> on the <strong>proxy host/container</strong> and runs
-          <code>pip install</code> there. The container needs outbound network to PyPI. Then point <strong>stdio → Command</strong> at
-          the suggested binary (or use <em>Apply to stdio command</em>).
+          Runs in the container (needs outbound network). Detects a CLI entrypoint and creates or updates the server.
+          Use the same <strong>Server id</strong> again to reinstall or refresh environment variables.
         </p>
-        <label for="install-venv">Venv id <span class="hint">(slug, directory under /data/venvs)</span></label>
-        <input id="install-venv" type="text" autocomplete="off" placeholder="unifi" />
-        <label for="install-pkg">Package</label>
-        <input id="install-pkg" type="text" autocomplete="off" placeholder="unifi-mcp-server" />
-        <div class="row">
-          <button type="button" class="secondary" id="install-pypi-btn">Install with pip</button>
-          <button type="button" class="secondary hidden" id="install-apply-cmd">Apply to stdio command</button>
+        <div class="row" style="margin-top: 0.5rem">
+          <label><input type="radio" name="wiz-ecosystem" value="pypi" checked /> PyPI (pip)</label>
+          <label><input type="radio" name="wiz-ecosystem" value="npm" /> npm</label>
         </div>
-        <pre id="install-pypi-log" class="hidden" style="margin-top: 0.75rem; max-height: 14rem; overflow: auto"></pre>
+        <label for="wiz-id">Server id <span class="hint">(slug; install folder name)</span></label>
+        <input id="wiz-id" type="text" autocomplete="off" placeholder="my-network-tools" />
+        <label for="wiz-pkg">Package</label>
+        <input id="wiz-pkg" type="text" autocomplete="off" placeholder="distribution-name or @scope/package" />
+        <label for="wiz-display">Display name <span class="hint">(optional)</span></label>
+        <input id="wiz-display" type="text" autocomplete="off" />
+        <label for="wiz-env">Environment <span class="hint">(JSON — API keys, etc.)</span></label>
+        <textarea id="wiz-env" placeholder="{}">{}</textarea>
+        <button type="button" id="wiz-go">Install and register</button>
+        <pre id="wiz-log" class="hidden" style="margin-top: 0.75rem; max-height: 16rem; overflow: auto"></pre>
       </fieldset>
-      <form id="add-form">
+      <div id="wiz-msg"></div>
+
+      <h2>Add remote MCP (HTTP)</h2>
+      <form id="add-http-form">
         <label for="f-id">Server ID <span class="hint">(lowercase slug)</span></label>
-        <input id="f-id" name="id" type="text" required autocomplete="off" placeholder="my-upstream" />
+        <input id="f-id" name="id" type="text" required autocomplete="off" placeholder="home-assistant" />
 
         <label for="f-name">Display name <span class="hint">(optional)</span></label>
-        <input id="f-name" name="display_name" type="text" autocomplete="off" placeholder="My upstream" />
+        <input id="f-name" name="display_name" type="text" autocomplete="off" />
 
         <div class="row">
-          <label><input type="radio" name="type" value="http" checked /> HTTP</label>
-          <label><input type="radio" name="type" value="stdio" /> stdio</label>
           <label><input type="checkbox" id="f-enabled" checked /> Enabled</label>
         </div>
 
@@ -270,27 +264,16 @@
             <label><input type="radio" name="http_transport" value="sse" /> Legacy HTTP + SSE</label>
           </div>
           <p class="hint">
-            Streamable HTTP: tries a single JSON-RPC POST first (works with <strong>Home Assistant</strong>
-            <code>/api/mcp</code>), then the full streamable MCP client if needed. SSE: legacy SSE URL.
+            Streamable HTTP tries one JSON-RPC POST first (e.g. Home Assistant <code>/api/mcp</code>), then the full
+            streamable client.
           </p>
           <label for="f-url">MCP endpoint URL</label>
-          <input id="f-url" type="text" placeholder="http://other-container:8080/mcp" />
+          <input id="f-url" type="text" placeholder="http://192.168.1.10:8123/api/mcp" />
           <label for="f-headers">Headers (JSON object, optional)</label>
           <textarea id="f-headers" placeholder='{"Authorization": "Bearer …"}'></textarea>
         </fieldset>
 
-        <fieldset id="blk-stdio" class="hidden">
-          <legend>stdio</legend>
-          <label for="f-cmd">Command</label>
-          <input id="f-cmd" type="text" placeholder='python -m mcp_server' />
-          <p class="hint">Shell-style quoting supported.</p>
-          <label for="f-cwd">Working directory (optional)</label>
-          <input id="f-cwd" type="text" placeholder="/data/venvs/myserver" />
-          <label for="f-env">Environment (JSON object, optional)</label>
-          <textarea id="f-env" placeholder='{"KEY": "value"}'></textarea>
-        </fieldset>
-
-        <button type="submit">Add server</button>
+        <button type="submit">Add HTTP server</button>
       </form>
       <div id="form-msg"></div>
     </section>
@@ -303,7 +286,7 @@
         <code>initialize</code> result (protocol features / “signals” from the handshake).
       </p>
       <div id="list-wrap">
-        <p id="list-empty" class="hint hidden">No servers yet. Use <em>Register server</em>.</p>
+        <p id="list-empty" class="hint hidden">No servers yet. Use the <em>Register server</em> tab.</p>
         <table id="srv-table" class="hidden">
           <thead>
             <tr>
@@ -372,25 +355,15 @@
     <script>
       (function () {
         const api = "/api/servers";
-        const catalogApi = "/api/catalog/presets";
-        const catalogSelect = document.getElementById("catalog-preset");
-        const catalogHint = document.getElementById("catalog-hint");
-        const installVenv = document.getElementById("install-venv");
-        const installPkg = document.getElementById("install-pkg");
-        const installPypiBtn = document.getElementById("install-pypi-btn");
-        const installApplyCmd = document.getElementById("install-apply-cmd");
-        const installPypiLog = document.getElementById("install-pypi-log");
-        const venvsApi = "/api/venvs/install-pypi";
-        let catalogPresets = [];
-        let lastSuggestedCommand = "";
+        const wizGo = document.getElementById("wiz-go");
+        const wizLog = document.getElementById("wiz-log");
+        const wizMsg = document.getElementById("wiz-msg");
 
         const tbody = document.getElementById("srv-body");
         const table = document.getElementById("srv-table");
         const empty = document.getElementById("list-empty");
-        const form = document.getElementById("add-form");
+        const httpForm = document.getElementById("add-http-form");
         const formMsg = document.getElementById("form-msg");
-        const blkHttp = document.getElementById("blk-http");
-        const blkStdio = document.getElementById("blk-stdio");
         const inspectOut = document.getElementById("inspect-out");
         const panelReg = document.getElementById("panel-register");
         const panelExp = document.getElementById("panel-explore");
@@ -399,12 +372,6 @@
         const editMsg = document.getElementById("edit-msg");
         const eBlkHttp = document.getElementById("e-blk-http");
         const eBlkStdio = document.getElementById("e-blk-stdio");
-
-        function escapeHtml(s) {
-          const d = document.createElement("div");
-          d.textContent = s == null ? "" : String(s);
-          return d.innerHTML;
-        }
 
         function parseJsonObject(text, label) {
           const t = (text || "").trim();
@@ -617,159 +584,83 @@
           });
         });
 
-        document.querySelectorAll('input[name="type"]').forEach((r) => {
-          r.addEventListener("change", () => {
-            const t = form.querySelector('input[name="type"]:checked').value;
-            blkHttp.classList.toggle("hidden", t !== "http");
-            blkStdio.classList.toggle("hidden", t !== "stdio");
-          });
-        });
-
-        function applyCatalogPreset(pid) {
-          if (!pid) {
-            catalogHint.classList.add("hidden");
-            catalogHint.innerHTML = "";
+        wizGo.addEventListener("click", async () => {
+          wizMsg.innerHTML = "";
+          wizLog.classList.remove("hidden");
+          wizLog.textContent = "Running…";
+          const ecosystem = document.querySelector('input[name="wiz-ecosystem"]:checked').value;
+          const server_id = document.getElementById("wiz-id").value.trim();
+          const pkgSpec = document.getElementById("wiz-pkg").value.trim();
+          const display_name = document.getElementById("wiz-display").value.trim() || null;
+          let env;
+          try {
+            env = parseJsonObject(document.getElementById("wiz-env").value, "Environment");
+          } catch (e) {
+            wizLog.classList.add("hidden");
+            wizLog.textContent = "";
+            wizMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
             return;
           }
-          const p = catalogPresets.find((x) => x.id === pid);
-          if (!p) return;
-          document.getElementById("f-id").value = p.default_server_id || "";
-          document.getElementById("f-name").value = p.display_name || "";
-          if (p.type === "stdio") {
-            form.querySelector('input[name="type"][value="stdio"]').checked = true;
-            blkHttp.classList.add("hidden");
-            blkStdio.classList.remove("hidden");
-            document.getElementById("f-cmd").value = p.command || "";
-            document.getElementById("f-cwd").value = p.cwd || "";
-            document.getElementById("f-env").value = JSON.stringify(p.env && Object.keys(p.env).length ? p.env : {}, null, 2);
-          } else {
-            form.querySelector('input[name="type"][value="http"]').checked = true;
-            blkHttp.classList.remove("hidden");
-            blkStdio.classList.add("hidden");
-            document.getElementById("f-url").value = p.url || "";
-            document.getElementById("f-headers").value = JSON.stringify(
-              p.headers && Object.keys(p.headers).length ? p.headers : {},
-              null,
-              2,
-            );
-            const ht = p.http_transport === "sse" ? "sse" : "streamable-http";
-            form.querySelectorAll('input[name="http_transport"]').forEach((el) => {
-              el.checked = el.value === ht;
-            });
+          if (!server_id || !pkgSpec) {
+            wizLog.classList.add("hidden");
+            wizMsg.innerHTML = '<div class="msg err">Server id and package are required.</div>';
+            return;
           }
-          let hint = (p.description || "").trim();
-          if (p.source_url) {
-            hint +=
-              (hint ? " " : "") +
-              '<a href="' +
-              p.source_url.replace(/"/g, "") +
-              '" target="_blank" rel="noopener">Project / docs</a>.';
-          }
-          if (p.package_hint) {
-            hint += (hint ? " " : "") + "Install: <code>" + escapeHtml(p.package_hint) + "</code>";
-          }
-          if (p.install_venv_id) installVenv.value = p.install_venv_id;
-          if (p.install_package) installPkg.value = p.install_package;
-          if (hint) {
-            catalogHint.innerHTML = hint;
-            catalogHint.classList.remove("hidden");
-          } else {
-            catalogHint.classList.add("hidden");
-            catalogHint.innerHTML = "";
-          }
-        }
-
-        catalogSelect.addEventListener("change", () => {
-          applyCatalogPreset(catalogSelect.value);
-        });
-
-        installPypiBtn.addEventListener("click", async () => {
-          installPypiLog.classList.remove("hidden");
-          installPypiLog.textContent = "Running…";
-          lastSuggestedCommand = "";
-          installApplyCmd.classList.add("hidden");
-          const venv_id = installVenv.value.trim();
-          const pkgSpec = installPkg.value.trim();
           try {
-            const r = await fetch(venvsApi, {
+            const r = await fetch(api + "/register-stdio-package", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ venv_id, package: pkgSpec }),
+              body: JSON.stringify({
+                ecosystem,
+                server_id,
+                package: pkgSpec,
+                display_name,
+                env,
+              }),
             });
             const data = await r.json().catch(() => ({}));
-            if (r.status === 403 || r.status === 400) {
+            if (r.status === 403 || r.status === 400 || r.status === 409) {
+              wizLog.classList.add("hidden");
               const d = data.detail;
-              installPypiLog.textContent =
-                typeof d === "string" ? d : JSON.stringify(d, null, 2);
+              wizMsg.innerHTML =
+                '<div class="msg err">' +
+                (typeof d === "string" ? d : JSON.stringify(d, null, 2)) +
+                "</div>";
               return;
             }
             if (!r.ok) {
-              installPypiLog.textContent = JSON.stringify(data, null, 2);
+              wizLog.textContent = JSON.stringify(data, null, 2);
+              wizMsg.innerHTML = '<div class="msg err">Request failed (' + r.status + ").</div>";
               return;
             }
             let out = data.log || "";
-            out += data.ok ? "\n\n— pip finished OK —" : "\n\n— pip reported failure —";
-            if (data.new_console_scripts && data.new_console_scripts.length) {
-              out += "\nNew executables in venv bin: " + data.new_console_scripts.join(", ");
-            }
-            installPypiLog.textContent = out;
-            if (data.suggested_command) {
-              lastSuggestedCommand = data.suggested_command;
-              installApplyCmd.classList.remove("hidden");
-              document.getElementById("f-cmd").value = data.suggested_command;
+            if (data.detail) out += "\n\n" + data.detail;
+            if (data.registered) out += "\n\n— Server registered —";
+            wizLog.textContent = out || JSON.stringify(data, null, 2);
+            if (data.ok && data.registered) {
+              wizMsg.innerHTML = '<div class="msg ok">Stdio server saved. You can inspect it in Explore.</div>';
+              loadServers();
+            } else {
+              wizMsg.innerHTML = '<div class="msg err">Install or registration did not complete (see log).</div>';
             }
           } catch (e) {
-            installPypiLog.textContent = String((e && e.message) || e);
+            wizLog.textContent = String((e && e.message) || e);
+            wizMsg.innerHTML = '<div class="msg err">Network or client error.</div>';
           }
         });
 
-        installApplyCmd.addEventListener("click", () => {
-          if (!lastSuggestedCommand) return;
-          form.querySelector('input[name="type"][value="stdio"]').checked = true;
-          blkHttp.classList.add("hidden");
-          blkStdio.classList.remove("hidden");
-          document.getElementById("f-cmd").value = lastSuggestedCommand;
-        });
-
-        async function loadCatalog() {
-          try {
-            const r = await fetch(catalogApi);
-            if (!r.ok) return;
-            catalogPresets = await r.json();
-            if (!Array.isArray(catalogPresets)) return;
-            const sel = catalogSelect;
-            while (sel.options.length > 1) sel.remove(1);
-            for (const p of catalogPresets) {
-              const opt = document.createElement("option");
-              opt.value = p.id;
-              opt.textContent = p.display_name || p.id;
-              sel.appendChild(opt);
-            }
-          } catch (_) {
-            /* ignore */
-          }
-        }
-
-        form.addEventListener("submit", async (ev) => {
+        httpForm.addEventListener("submit", async (ev) => {
           ev.preventDefault();
           formMsg.innerHTML = "";
           const id = document.getElementById("f-id").value.trim();
           const display_name = document.getElementById("f-name").value.trim() || null;
-          const type = form.querySelector('input[name="type"]:checked').value;
           const enabled = document.getElementById("f-enabled").checked;
           let body;
           try {
-            if (type === "http") {
-              const url = document.getElementById("f-url").value.trim();
-              const headers = parseJsonObject(document.getElementById("f-headers").value, "Headers");
-              const http_transport = form.querySelector('input[name="http_transport"]:checked').value;
-              body = { id, type: "http", enabled, display_name, url, headers, http_transport };
-            } else {
-              const cmd = document.getElementById("f-cmd").value.trim();
-              const cwd = document.getElementById("f-cwd").value.trim() || null;
-              const env = parseJsonObject(document.getElementById("f-env").value, "Environment");
-              body = { id, type: "stdio", enabled, display_name, command: cmd, cwd, env };
-            }
+            const url = document.getElementById("f-url").value.trim();
+            const headers = parseJsonObject(document.getElementById("f-headers").value, "Headers");
+            const http_transport = httpForm.querySelector('input[name="http_transport"]:checked').value;
+            body = { id, type: "http", enabled, display_name, url, headers, http_transport };
           } catch (e) {
             formMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
             return;
@@ -792,18 +683,12 @@
             return;
           }
           formMsg.innerHTML = '<div class="msg ok">Saved.</div>';
-          form.reset();
-          catalogSelect.value = "";
-          applyCatalogPreset("");
+          httpForm.reset();
           document.getElementById("f-enabled").checked = true;
-          form.querySelector('input[name="type"][value="http"]').checked = true;
-          form.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
-          blkHttp.classList.remove("hidden");
-          blkStdio.classList.add("hidden");
+          httpForm.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
           loadServers();
         });
 
-        loadCatalog();
         loadServers();
       })();
     </script>

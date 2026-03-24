@@ -28,9 +28,7 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8080
-    """Directory for persisted config and venvs (bind-mount in Docker)."""
-    data_dir: Path = Path("/data")
-    """Allow POST /api/venvs/install-pypi from the admin UI (disable in untrusted networks)."""
+    data_dir: Path = Path("/data")  # config, /venvs, /npm
     allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = True
-    """Static files root; admin UI lives under `<static_root>/admin/`."""
+    allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = True
     static_root: Path = Path("static")

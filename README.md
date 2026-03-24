@@ -25,7 +25,7 @@ docker compose up -d --build
 
 Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
 
-On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. Use **Add from catalog** to pre-fill known MCP servers (e.g. [UniFi MCP Server](https://github.com/enuno/unifi-mcp-server)); merge more entries by mounting **`/data/config/catalog_presets.json`** (same JSON array shape as **`GET /api/catalog/presets`**; use the placeholder **`{DATA_DIR}`** in stdio **`command`** / **`cwd`** so paths follow **`MCP_PROXY_DATA_DIR`**). Use **Install PyPI package** to create **`/data/venvs/<id>`** and run **`pip install`** inside the container (needs network egress to PyPI), then wire the stdio command to the suggested binary. JSON API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`** (same JSON shape as POST; id must match URL), **`DELETE /api/servers/{id}`**, **`GET /api/catalog/presets`**. For each server, **`GET /api/servers/{id}/inspect?kind=tools|resources|prompts|capabilities`** runs a short MCP session and returns **`list_tools`**, **`list_resources`**, **`list_prompts`**, or the **`initialize`** result. HTTP upstreams: **`streamable-http`** (default; tries one JSON-RPC POST per request first for hosts like **Home Assistant** **`/api/mcp`**, then the full streamable MCP client), or **`sse`** (legacy).
+On **Admin**, **Install stdio MCP** runs **`pip`** (PyPI) or **`npm install`** (npm) inside the container, detects a CLI binary, and **`POST /api/servers/register-stdio-package`** creates or updates the stdio entry in **`/data/config/servers.json`** (install roots: **`/data/venvs/<id>`**, **`/data/npm/<id>`**). **Add remote MCP (HTTP)** adds streamable or legacy SSE upstreams. Optional catalog overlays: mount **`/data/config/catalog_presets.json`** and use **`GET /api/catalog/presets`** (builtin list is empty; **`{DATA_DIR}`** in preset **`command`** / **`cwd`** expands to **`MCP_PROXY_DATA_DIR`**). API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`**, **`DELETE /api/servers/{id}`**, **`POST /api/servers/register-stdio-package`**, **`GET /api/servers/{id}/inspect?kind=…`**. HTTP transport: **`streamable-http`** (default) or **`sse`**.
 
 ## Use with Portainer
 
@@ -42,8 +42,9 @@ If your Portainer environment cannot build from Git, build the image elsewhere, 
 |----------|---------|---------|
 | `MCP_PROXY_HOST` | `0.0.0.0` | Bind address |
 | `MCP_PROXY_PORT` | `8080` | Port |
-| `MCP_PROXY_DATA_DIR` | `/data` | Persisted config / venvs |
-| `MCP_PROXY_ALLOW_PYPI_INSTALL` | `true` | Allow **Register server → Install PyPI package** (`POST /api/venvs/install-pypi`). Set to `false` if the admin UI is exposed untrusted. |
+| `MCP_PROXY_DATA_DIR` | `/data` | Config, **`venvs/`** (PyPI), **`npm/`** (npm) |
+| `MCP_PROXY_ALLOW_PYPI_INSTALL` | `true` | Allow pip in **register-stdio-package** (`pypi`). Set `false` if the admin UI is untrusted. |
+| `MCP_PROXY_ALLOW_NPM_INSTALL` | `true` | Allow npm in **register-stdio-package** (`npm`). Requires Node in the image. |
 | `MCP_PROXY_STATIC_ROOT` | `/app/static` | Static files root (set in image) |
 
 ## Local development (optional)

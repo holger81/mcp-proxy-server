@@ -30,7 +30,7 @@ class McpCatalogPreset(BaseModel):
     )
     install_package: str | None = Field(
         default=None,
-        description="PyPI spec for admin install button (same rules as POST /api/venvs/install-pypi).",
+        description="PyPI spec for overlay presets (same rules as register-stdio-package).",
     )
     type: Literal["stdio", "http"]
     default_server_id: str = Field(description="Suggested servers.json id (slug)")
