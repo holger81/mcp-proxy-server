@@ -214,7 +214,8 @@
     </p>
     <p>
       <a href="/api/health"><code>/api/health</code></a> ·
-      <a href="/api/catalog/presets"><code>/api/catalog/presets</code></a>
+      <a href="/api/catalog/presets"><code>/api/catalog/presets</code></a> ·
+      <a href="/docs"><code>API docs</code></a> (includes <code>POST /api/venvs/install-pypi</code>)
     </p>
 
     <nav class="tabs" role="tablist">
@@ -231,6 +232,23 @@
           <option value="">— Custom (manual) —</option>
         </select>
         <p id="catalog-hint" class="hint hidden"></p>
+      </fieldset>
+      <fieldset id="blk-install-pypi">
+        <legend>Install PyPI package (stdio servers)</legend>
+        <p class="hint">
+          Creates <code>/data/venvs/&lt;venv id&gt;</code> on the <strong>proxy host/container</strong> and runs
+          <code>pip install</code> there. The container needs outbound network to PyPI. Then point <strong>stdio → Command</strong> at
+          the suggested binary (or use <em>Apply to stdio command</em>).
+        </p>
+        <label for="install-venv">Venv id <span class="hint">(slug, directory under /data/venvs)</span></label>
+        <input id="install-venv" type="text" autocomplete="off" placeholder="unifi" />
+        <label for="install-pkg">Package</label>
+        <input id="install-pkg" type="text" autocomplete="off" placeholder="unifi-mcp-server" />
+        <div class="row">
+          <button type="button" class="secondary" id="install-pypi-btn">Install with pip</button>
+          <button type="button" class="secondary hidden" id="install-apply-cmd">Apply to stdio command</button>
+        </div>
+        <pre id="install-pypi-log" class="hidden" style="margin-top: 0.75rem; max-height: 14rem; overflow: auto"></pre>
       </fieldset>
       <form id="add-form">
         <label for="f-id">Server ID <span class="hint">(lowercase slug)</span></label>
@@ -357,7 +375,14 @@
         const catalogApi = "/api/catalog/presets";
         const catalogSelect = document.getElementById("catalog-preset");
         const catalogHint = document.getElementById("catalog-hint");
+        const installVenv = document.getElementById("install-venv");
+        const installPkg = document.getElementById("install-pkg");
+        const installPypiBtn = document.getElementById("install-pypi-btn");
+        const installApplyCmd = document.getElementById("install-apply-cmd");
+        const installPypiLog = document.getElementById("install-pypi-log");
+        const venvsApi = "/api/venvs/install-pypi";
         let catalogPresets = [];
+        let lastSuggestedCommand = "";
 
         const tbody = document.getElementById("srv-body");
         const table = document.getElementById("srv-table");
@@ -643,6 +668,8 @@
           if (p.package_hint) {
             hint += (hint ? " " : "") + "Install: <code>" + escapeHtml(p.package_hint) + "</code>";
           }
+          if (p.install_venv_id) installVenv.value = p.install_venv_id;
+          if (p.install_package) installPkg.value = p.install_package;
           if (hint) {
             catalogHint.innerHTML = hint;
             catalogHint.classList.remove("hidden");
@@ -654,6 +681,53 @@
 
         catalogSelect.addEventListener("change", () => {
           applyCatalogPreset(catalogSelect.value);
+        });
+
+        installPypiBtn.addEventListener("click", async () => {
+          installPypiLog.classList.remove("hidden");
+          installPypiLog.textContent = "Running…";
+          lastSuggestedCommand = "";
+          installApplyCmd.classList.add("hidden");
+          const venv_id = installVenv.value.trim();
+          const pkgSpec = installPkg.value.trim();
+          try {
+            const r = await fetch(venvsApi, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ venv_id, package: pkgSpec }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (r.status === 403 || r.status === 400) {
+              const d = data.detail;
+              installPypiLog.textContent =
+                typeof d === "string" ? d : JSON.stringify(d, null, 2);
+              return;
+            }
+            if (!r.ok) {
+              installPypiLog.textContent = JSON.stringify(data, null, 2);
+              return;
+            }
+            let out = data.log || "";
+            out += data.ok ? "\n\n— pip finished OK —" : "\n\n— pip reported failure —";
+            if (data.new_console_scripts && data.new_console_scripts.length) {
+              out += "\nNew executables in venv bin: " + data.new_console_scripts.join(", ");
+            }
+            installPypiLog.textContent = out;
+            if (data.suggested_command) {
+              lastSuggestedCommand = data.suggested_command;
+              installApplyCmd.classList.remove("hidden");
+            }
+          } catch (e) {
+            installPypiLog.textContent = String((e && e.message) || e);
+          }
+        });
+
+        installApplyCmd.addEventListener("click", () => {
+          if (!lastSuggestedCommand) return;
+          form.querySelector('input[name="type"][value="stdio"]').checked = true;
+          blkHttp.classList.add("hidden");
+          blkStdio.classList.remove("hidden");
+          document.getElementById("f-cmd").value = lastSuggestedCommand;
         });
 
         async function loadCatalog() {

@@ -5,6 +5,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from mcp_proxy.models import validate_slug_id
+from mcp_proxy.pypi_venv import validate_package_spec
+
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 HttpTransport = Literal["streamable-http", "sse"]
@@ -20,6 +23,14 @@ class McpCatalogPreset(BaseModel):
     package_hint: str | None = Field(
         default=None,
         description="Optional install hint, e.g. pip install …",
+    )
+    install_venv_id: str | None = Field(
+        default=None,
+        description="When set, admin can pre-fill PyPI install (venv slug under /data/venvs).",
+    )
+    install_package: str | None = Field(
+        default=None,
+        description="PyPI spec for admin install button (same rules as POST /api/venvs/install-pypi).",
     )
     type: Literal["stdio", "http"]
     default_server_id: str = Field(description="Suggested servers.json id (slug)")
@@ -37,6 +48,20 @@ class McpCatalogPreset(BaseModel):
         if not _SLUG.match(v):
             raise ValueError("must be a lowercase slug (letters, digits, hyphens)")
         return v
+
+    @field_validator("install_venv_id", mode="before")
+    @classmethod
+    def empty_install_venv(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return validate_slug_id(str(v))
+
+    @field_validator("install_package", mode="before")
+    @classmethod
+    def install_pkg_spec(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        return validate_package_spec(str(v))
 
     @field_validator("headers", "env", mode="before")
     @classmethod

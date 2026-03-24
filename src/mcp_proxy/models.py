@@ -7,6 +7,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
+def validate_slug_id(v: str) -> str:
+    """Same rules as UpstreamServer.id (for venv names, etc.)."""
+    v = v.strip().lower()
+    if not _SLUG.match(v):
+        raise ValueError(
+            "must start with a letter or digit, contain only lowercase letters, digits, hyphens"
+        )
+    return v
+
+
 def _split_command(v: Any) -> list[str] | None:
     if v is None or v == "":
         return None
@@ -58,12 +68,7 @@ class UpstreamServer(BaseModel):
     @field_validator("id")
     @classmethod
     def id_slug(cls, v: str) -> str:
-        v = v.strip().lower()
-        if not _SLUG.match(v):
-            raise ValueError(
-                "id must start with a letter or digit, contain only lowercase letters, digits, hyphens"
-            )
-        return v
+        return validate_slug_id(v)
 
     @field_validator("command", mode="before")
     @classmethod
