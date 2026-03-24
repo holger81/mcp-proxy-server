@@ -35,6 +35,10 @@ class UpstreamServer(BaseModel):
     """One MCP upstream definition persisted under /data/config/servers.json."""
 
     id: Annotated[str, Field(min_length=1, max_length=63, description="Stable slug, e.g. my-fetch")]
+    domain: str = Field(
+        default="default",
+        description="Logical domain id (from admin Domains tab) for MCP searchToolsForDomain / enums.",
+    )
     enabled: bool = True
     type: Literal["stdio", "http"]
     display_name: str | None = Field(default=None, description="Optional label in admin UI")
@@ -68,6 +72,11 @@ class UpstreamServer(BaseModel):
     @field_validator("id")
     @classmethod
     def id_slug(cls, v: str) -> str:
+        return validate_slug_id(v)
+
+    @field_validator("domain")
+    @classmethod
+    def domain_slug(cls, v: str) -> str:
         return validate_slug_id(v)
 
     @field_validator("command", mode="before")

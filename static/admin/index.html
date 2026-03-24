@@ -48,7 +48,8 @@
         color: #b8b8c8;
       }
       input[type="text"],
-      textarea {
+      textarea,
+      select {
         width: 100%;
         max-width: 100%;
         box-sizing: border-box;
@@ -228,9 +229,10 @@
     <h1>MCP Proxy</h1>
     <div id="auth-off-banner" class="hidden banner-warn" role="status"></div>
     <p>
-      Config: <code>/data/config/servers.json</code>. Stdio MCP servers are installed via PyPI or npm below (under
-      <code>/data/venvs</code> or <code>/data/npm</code>). Remote servers use the HTTP form. Inspect runs a short MCP
-      session to the upstream.
+      Config: <code>/data/config/servers.json</code>, domains: <code>/data/config/domains.json</code>. Each server
+      belongs to a <strong>domain</strong> (unique id + label) for the public MCP surface: clients only see
+      <code>searchToolsForDomain</code>, <code>searchTool</code>, and <code>callTool</code> — not every upstream tool at
+      once. Stdio installs use PyPI/npm under <code>/data/venvs</code> or <code>/data/npm</code>.
     </p>
     <p><a href="/api/health"><code>/api/health</code></a> · <a href="/docs"><code>API docs</code></a></p>
 
@@ -238,6 +240,7 @@
       <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
       <button type="button" class="tab" data-tab="explore" role="tab" aria-selected="false">Explore servers</button>
       <button type="button" class="tab" data-tab="clients" role="tab" aria-selected="false">API clients</button>
+      <button type="button" class="tab" data-tab="domains" role="tab" aria-selected="false">Domains</button>
       <button type="button" class="secondary push-end hidden" id="btn-logout">Log out</button>
     </nav>
 
@@ -255,6 +258,8 @@
         </div>
         <label for="wiz-id">Server id <span class="hint">(slug; install folder name)</span></label>
         <input id="wiz-id" type="text" autocomplete="off" placeholder="my-network-tools" />
+        <label for="wiz-domain">Domain <span class="hint">(MCP dropdown id; add under Domains tab)</span></label>
+        <select id="wiz-domain" aria-label="Domain for stdio server"></select>
         <label for="wiz-pkg">Package</label>
         <input id="wiz-pkg" type="text" autocomplete="off" placeholder="distribution-name or @scope/package" />
         <label for="wiz-display">Display name <span class="hint">(optional)</span></label>
@@ -273,6 +278,9 @@
 
         <label for="f-name">Display name <span class="hint">(optional)</span></label>
         <input id="f-name" name="display_name" type="text" autocomplete="off" />
+
+        <label for="f-domain">Domain</label>
+        <select id="f-domain" name="domain" aria-label="Domain for HTTP server"></select>
 
         <div class="row">
           <label><input type="checkbox" id="f-enabled" checked /> Enabled</label>
@@ -312,6 +320,7 @@
           <thead>
             <tr>
               <th>ID</th>
+              <th>Domain</th>
               <th>Type</th>
               <th>HTTP mode</th>
               <th>Target</th>
@@ -354,6 +363,34 @@
       <p id="clients-empty" class="hint">No clients yet.</p>
     </section>
 
+    <section id="panel-domains" class="hidden" role="tabpanel">
+      <h2>Domains</h2>
+      <p class="hint">
+        Unique <strong>id</strong> (slug) is what MCP clients see in the <code>domain</code> parameter enum for
+        <code>searchToolsForDomain</code>. <strong>Label</strong> is for humans in this UI only. You cannot delete a
+        domain that is still assigned to a server, or remove <code>default</code>.
+      </p>
+      <label for="domain-new-id">New domain id <span class="hint">(slug)</span></label>
+      <input id="domain-new-id" type="text" autocomplete="off" placeholder="smart-home" />
+      <label for="domain-new-label">Label <span class="hint">(e.g. Smart home)</span></label>
+      <input id="domain-new-label" type="text" autocomplete="off" placeholder="Smart home" />
+      <button type="button" id="domain-add">Add domain</button>
+      <div id="domain-msg"></div>
+      <h2>Existing domains</h2>
+      <button type="button" class="secondary small" id="domain-refresh" style="margin-top: 0.5rem">Refresh</button>
+      <table id="domains-table" class="hidden" style="margin-top: 0.5rem">
+        <thead>
+          <tr>
+            <th>Id</th>
+            <th>Label</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="domains-body"></tbody>
+      </table>
+      <p id="domains-empty" class="hint">No domains loaded.</p>
+    </section>
+
     <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
       <div class="dialog-inner">
         <h2 id="edit-dialog-title">Edit server</h2>
@@ -363,6 +400,9 @@
 
           <label for="e-name">Display name <span class="hint">(optional)</span></label>
           <input id="e-name" type="text" autocomplete="off" />
+
+          <label for="e-domain">Domain</label>
+          <select id="e-domain" aria-label="Domain for server"></select>
 
           <div class="row">
             <label><input type="radio" name="e-type" value="http" /> HTTP</label>
@@ -429,6 +469,43 @@
 
         const api = "/api/servers";
         const apiClients = "/api/clients";
+        const apiDomains = "/api/domains";
+
+        let cachedDomains = [];
+
+        async function loadDomainsList() {
+          const res = await apiFetch(apiDomains);
+          if (!res.ok) {
+            cachedDomains = [];
+            return;
+          }
+          cachedDomains = await res.json();
+          fillAllDomainSelects();
+        }
+
+        function fillAllDomainSelects() {
+          const selIds = ["wiz-domain", "f-domain", "e-domain"];
+          for (const sid of selIds) {
+            const el = document.getElementById(sid);
+            if (!el) continue;
+            const cur = el.value;
+            el.replaceChildren();
+            for (const d of cachedDomains) {
+              const opt = document.createElement("option");
+              opt.value = d.id;
+              opt.textContent = d.label + " (" + d.id + ")";
+              el.appendChild(opt);
+            }
+            if (cur && [...el.options].some((o) => o.value === cur)) {
+              el.value = cur;
+            } else if (el.options.length) {
+              el.value = el.options[0].value;
+            }
+          }
+        }
+
+        await loadDomainsList();
+
         const wizGo = document.getElementById("wiz-go");
         const wizLog = document.getElementById("wiz-log");
         const wizMsg = document.getElementById("wiz-msg");
@@ -442,6 +519,7 @@
         const panelReg = document.getElementById("panel-register");
         const panelExp = document.getElementById("panel-explore");
         const panelClients = document.getElementById("panel-clients");
+        const panelDomains = document.getElementById("panel-domains");
         const clientsBody = document.getElementById("clients-body");
         const clientsTable = document.getElementById("clients-table");
         const clientsEmpty = document.getElementById("clients-empty");
@@ -496,6 +574,8 @@
           editMsg.innerHTML = "";
           document.getElementById("e-id").value = s.id;
           document.getElementById("e-name").value = s.display_name || "";
+          fillAllDomainSelects();
+          document.getElementById("e-domain").value = s.domain || "default";
           document.getElementById("e-enabled").checked = !!s.enabled;
           editForm.querySelectorAll('input[name="e-type"]').forEach((el) => {
             el.checked = el.value === s.type;
@@ -533,16 +613,17 @@
           const enabled = document.getElementById("e-enabled").checked;
           let body;
           try {
+            const domain = document.getElementById("e-domain").value.trim() || "default";
             if (type === "http") {
               const url = document.getElementById("e-url").value.trim();
               const headers = parseJsonObject(document.getElementById("e-headers").value, "Headers");
               const http_transport = editForm.querySelector('input[name="e-http_transport"]:checked').value;
-              body = { id, type: "http", enabled, display_name, url, headers, http_transport };
+              body = { id, domain, type: "http", enabled, display_name, url, headers, http_transport };
             } else {
               const cmd = document.getElementById("e-cmd").value.trim();
               const cwd = document.getElementById("e-cwd").value.trim() || null;
               const env = parseJsonObject(document.getElementById("e-env").value, "Environment");
-              body = { id, type: "stdio", enabled, display_name, command: cmd, cwd, env };
+              body = { id, domain, type: "stdio", enabled, display_name, command: cmd, cwd, env };
             }
           } catch (e) {
             editMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
@@ -603,6 +684,8 @@
             const tr = document.createElement("tr");
             const tdId = document.createElement("td");
             tdId.textContent = s.id;
+            const tdDom = document.createElement("td");
+            tdDom.textContent = s.domain || "default";
             const tdType = document.createElement("td");
             tdType.textContent = s.type;
             const tdHttp = document.createElement("td");
@@ -650,7 +733,7 @@
               loadServers();
             });
             tdAct.appendChild(del);
-            tr.append(tdId, tdType, tdHttp, tdTgt, tdIn, tdAct);
+            tr.append(tdId, tdDom, tdType, tdHttp, tdTgt, tdIn, tdAct);
             tbody.appendChild(tr);
           }
         }
@@ -735,6 +818,93 @@
 
         document.getElementById("client-refresh").addEventListener("click", () => loadClients());
 
+        async function loadDomainsPanel() {
+          const domainMsg = document.getElementById("domain-msg");
+          domainMsg.innerHTML = "";
+          const res = await apiFetch(apiDomains);
+          const domainsBody = document.getElementById("domains-body");
+          const domainsTable = document.getElementById("domains-table");
+          const domainsEmpty = document.getElementById("domains-empty");
+          if (!res.ok) {
+            domainMsg.innerHTML =
+              '<div class="msg err">Failed to load domains (' + res.status + ")</div>";
+            return;
+          }
+          const list = await res.json();
+          domainsBody.replaceChildren();
+          if (!list.length) {
+            domainsTable.classList.add("hidden");
+            domainsEmpty.classList.remove("hidden");
+            return;
+          }
+          domainsEmpty.classList.add("hidden");
+          domainsTable.classList.remove("hidden");
+          for (const d of list) {
+            const tr = document.createElement("tr");
+            const tdI = document.createElement("td");
+            tdI.textContent = d.id;
+            const tdL = document.createElement("td");
+            tdL.textContent = d.label;
+            const tdA = document.createElement("td");
+            if (d.id !== "default") {
+              const del = document.createElement("button");
+              del.type = "button";
+              del.className = "danger";
+              del.textContent = "Delete";
+              del.addEventListener("click", async () => {
+                if (!confirm("Delete domain “" + d.id + "”? Servers using it must be reassigned first.")) return;
+                const r = await apiFetch(apiDomains + "/" + encodeURIComponent(d.id), { method: "DELETE" });
+                if (!r.ok) {
+                  const err = await r.json().catch(() => ({}));
+                  alert(typeof err.detail === "string" ? err.detail : "Delete failed: " + r.status);
+                  return;
+                }
+                await loadDomainsList();
+                loadDomainsPanel();
+                loadServers();
+              });
+              tdA.appendChild(del);
+            } else {
+              tdA.textContent = "—";
+            }
+            tr.append(tdI, tdL, tdA);
+            domainsBody.appendChild(tr);
+          }
+        }
+
+        document.getElementById("domain-add").addEventListener("click", async () => {
+          const domainMsg = document.getElementById("domain-msg");
+          domainMsg.innerHTML = "";
+          const id = document.getElementById("domain-new-id").value.trim();
+          const label = document.getElementById("domain-new-label").value.trim();
+          if (!id || !label) {
+            domainMsg.innerHTML = '<div class="msg err">Id and label are required.</div>';
+            return;
+          }
+          const res = await apiFetch(apiDomains, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id, label }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            domainMsg.innerHTML =
+              '<div class="msg err">' +
+              (typeof data.detail === "string" ? data.detail : JSON.stringify(data)) +
+              "</div>";
+            return;
+          }
+          domainMsg.innerHTML = '<div class="msg ok">Domain added.</div>';
+          document.getElementById("domain-new-id").value = "";
+          document.getElementById("domain-new-label").value = "";
+          await loadDomainsList();
+          loadDomainsPanel();
+        });
+
+        document.getElementById("domain-refresh").addEventListener("click", () => {
+          loadDomainsList().then(() => loadDomainsPanel());
+        });
+
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
             const tab = btn.getAttribute("data-tab");
@@ -746,8 +916,10 @@
             panelReg.classList.toggle("hidden", tab !== "register");
             panelExp.classList.toggle("hidden", tab !== "explore");
             panelClients.classList.toggle("hidden", tab !== "clients");
+            panelDomains.classList.toggle("hidden", tab !== "domains");
             if (tab === "explore") loadServers();
             if (tab === "clients") loadClients();
+            if (tab === "domains") loadDomainsPanel();
           });
         });
 
@@ -780,6 +952,7 @@
               body: JSON.stringify({
                 ecosystem,
                 server_id,
+                domain: document.getElementById("wiz-domain").value.trim() || "default",
                 package: pkgSpec,
                 display_name,
                 env,
@@ -827,7 +1000,16 @@
             const url = document.getElementById("f-url").value.trim();
             const headers = parseJsonObject(document.getElementById("f-headers").value, "Headers");
             const http_transport = httpForm.querySelector('input[name="http_transport"]:checked').value;
-            body = { id, type: "http", enabled, display_name, url, headers, http_transport };
+            body = {
+              id,
+              domain: document.getElementById("f-domain").value.trim() || "default",
+              type: "http",
+              enabled,
+              display_name,
+              url,
+              headers,
+              http_transport,
+            };
           } catch (e) {
             formMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
             return;
@@ -853,6 +1035,7 @@
           httpForm.reset();
           document.getElementById("f-enabled").checked = true;
           httpForm.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
+          fillAllDomainSelects();
           loadServers();
         });
 

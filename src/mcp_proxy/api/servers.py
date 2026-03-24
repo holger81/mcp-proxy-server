@@ -19,6 +19,14 @@ def _store(request: Request) -> ServerConfigStore:
     return request.app.state.server_store
 
 
+def _validate_domain(request: Request, domain_id: str) -> None:
+    if domain_id not in request.app.state.domain_store.id_set():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown domain {domain_id!r}. Add it under Admin → Domains.",
+        )
+
+
 @router.get("")
 async def list_servers(request: Request) -> list[dict]:
     store = _store(request)
@@ -27,6 +35,7 @@ async def list_servers(request: Request) -> list[dict]:
 
 @router.post("", status_code=201)
 async def add_server(request: Request, body: UpstreamServer) -> dict:
+    _validate_domain(request, body.domain)
     store = _store(request)
     try:
         store.add(body)
@@ -40,6 +49,7 @@ class RegisterStdioPackageBody(BaseModel):
 
     ecosystem: Literal["pypi", "npm"]
     server_id: str = Field(min_length=1, max_length=63)
+    domain: str = Field(default="default", max_length=63)
     package: str = Field(min_length=1, max_length=200)
     display_name: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
@@ -47,6 +57,11 @@ class RegisterStdioPackageBody(BaseModel):
     @field_validator("server_id")
     @classmethod
     def server_slug(cls, v: str) -> str:
+        return validate_slug_id(v)
+
+    @field_validator("domain")
+    @classmethod
+    def domain_slug(cls, v: str) -> str:
         return validate_slug_id(v)
 
     @field_validator("package")
@@ -82,6 +97,7 @@ class RegisterStdioPackageBody(BaseModel):
 @router.post("/register-stdio-package")
 async def register_stdio_package(request: Request, body: RegisterStdioPackageBody) -> dict:
     """pip or npm install into /data, then add or replace a stdio server with the detected CLI binary."""
+    _validate_domain(request, body.domain)
     settings = request.app.state.settings
     store = _store(request)
 
@@ -147,6 +163,7 @@ async def register_stdio_package(request: Request, body: RegisterStdioPackageBod
 
     server = UpstreamServer(
         id=body.server_id,
+        domain=body.domain,
         type="stdio",
         enabled=True,
         display_name=body.display_name,
@@ -184,6 +201,7 @@ async def update_server(request: Request, server_id: str, body: UpstreamServer) 
             status_code=400,
             detail="JSON id must match the URL path (server id cannot be changed here)",
         )
+    _validate_domain(request, body.domain)
     store = _store(request)
     try:
         store.update(server_id, body)

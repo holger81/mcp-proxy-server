@@ -2,7 +2,7 @@
 
 FastAPI app that aggregates registered MCP upstreams:
 
-- `GET/POST /mcp` — **Streamable HTTP** MCP endpoint (aggregated tools as `<server-id>/<tool-name>`). When auth is enabled, send `Authorization: Bearer <api-client-token>` (same as `/api/*`).
+- `GET/POST /mcp` — **Streamable HTTP** MCP endpoint. Clients only see three tools: **`searchToolsForDomain`**, **`searchTool`**, and **`callTool`**. Upstream tools are listed or invoked via those (composite name `<server-id>/<tool-name>`). Domains group servers; each server has a **domain** id configured in the admin UI. When auth is enabled, send `Authorization: Bearer <api-client-token>` (same as `/api/*`).
 - `GET /api/health` — liveness
 - `GET /admin/` — static admin shell
 
@@ -55,6 +55,8 @@ If your Portainer environment cannot build from Git, build the image elsewhere, 
 | `MCP_PROXY_SESSION_SECRET` | *(empty)* | Required when admin password is set; use a long random string (≥16 chars) |
 | `MCP_PROXY_SESSION_SECRET_FILE` | *(empty)* | If set, session secret is read from this file (overrides `MCP_PROXY_SESSION_SECRET`). |
 | `MCP_PROXY_SECURE_COOKIES` | `false` | Set `true` when serving over HTTPS so session cookies are `Secure` |
+
+Domains are stored in **`/data/config/domains.json`** (bootstrap includes **`default`**). Manage them in **Admin → Domains** (requires admin session when auth is on). Each server has a **`domain`** field in **`servers.json`**. API: **`GET/POST /api/domains`**, **`DELETE /api/domains/{id}`** (admin session only).
 
 ### Authentication
 

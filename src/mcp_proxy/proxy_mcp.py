@@ -1,8 +1,10 @@
-"""Aggregating MCP server: exposes enabled upstream tools as `<server-id>/<tool-name>`."""
+"""MCP proxy: only exposes searchToolsForDomain, searchTool, and callTool (domains group upstreams)."""
 
 from __future__ import annotations
 
+import json
 import logging
+from typing import Any
 
 import anyio
 from mcp import types as mcp_types
@@ -11,6 +13,8 @@ from mcp.server import Server
 from mcp.shared.exceptions import McpError
 
 from mcp_proxy.config_store import ServerConfigStore
+from mcp_proxy.domain_store import DomainStore
+from mcp_proxy.models import UpstreamServer
 from mcp_proxy.upstream_inspect import _upstream_streams
 
 log = logging.getLogger(__name__)
@@ -24,8 +28,8 @@ def _split_proxy_tool_name(name: str) -> tuple[str, str]:
             mcp_types.ErrorData(
                 code=mcp_types.INVALID_PARAMS,
                 message=(
-                    f"Invalid tool name {name!r}: expected `<server-id>/<upstream-tool-name>` "
-                    "(server id is the slug from the admin UI)."
+                    f"Invalid toolName {name!r}: expected `<server-id>/<upstream-tool-name>` "
+                    "as returned by searchToolsForDomain or searchTool."
                 ),
             )
         )
@@ -34,97 +38,296 @@ def _split_proxy_tool_name(name: str) -> tuple[str, str]:
         raise McpError(
             mcp_types.ErrorData(
                 code=mcp_types.INVALID_PARAMS,
-                message=f"Invalid tool name {name!r}: empty server id or tool name",
+                message=f"Invalid toolName {name!r}: empty server id or tool name",
             )
         )
     return sid, tool
 
 
-def build_proxy_mcp_server(store: ServerConfigStore) -> Server:
+async def _list_upstream_tools(server: UpstreamServer) -> list[mcp_types.Tool]:
+    with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
+        async with _upstream_streams(server) as (read_stream, write_stream):
+            async with ClientSession(
+                read_stream,
+                write_stream,
+                client_info=mcp_types.Implementation(name="mcp-proxy", version="0.1.0"),
+            ) as session:
+                await session.initialize()
+                res = await session.list_tools()
+                return list(res.tools)
+
+
+def _tool_defs_for_server(server: UpstreamServer, tools: list[mcp_types.Tool]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for t in tools:
+        composite = f"{server.id}/{t.name}"
+        out.append(
+            {
+                "toolName": composite,
+                "description": (t.description or "").strip(),
+                "domain": server.domain,
+                "serverId": server.id,
+                "inputSchema": t.inputSchema,
+            }
+        )
+    return out
+
+
+async def _collect_all_tool_defs(store: ServerConfigStore, domain_id: str | None) -> list[dict[str, Any]]:
+    combined: list[dict[str, Any]] = []
+    for s in store.list_servers():
+        if not s.enabled:
+            continue
+        if domain_id is not None and s.domain != domain_id:
+            continue
+        try:
+            tools = await _list_upstream_tools(s)
+            combined.extend(_tool_defs_for_server(s, tools))
+        except TimeoutError:
+            log.warning("collect tools: timeout for upstream %s", s.id)
+        except Exception:
+            log.exception("collect tools: skip upstream %s", s.id)
+    return combined
+
+
+def _domain_enum_schema(domain_ids: list[str], description: str) -> dict[str, Any]:
+    if not domain_ids:
+        domain_ids = ["default"]
+    return {"type": "string", "enum": domain_ids, "description": description}
+
+
+def _instructions() -> str:
+    return (
+        "Upstream MCP tools are hidden. Use only: "
+        "searchToolsForDomain(domain) to list tools in one domain, "
+        "searchTool(query, domain?) to search by name/description, "
+        "callTool(toolName, arguments?) to run a tool. "
+        "The `domain` parameter uses ids from the proxy admin Domains tab (enum is refreshed on each tools/list). "
+        "Each upstream server is assigned to exactly one domain in the admin UI. "
+        "toolName format: `<server-id>/<upstream-tool-name>`."
+    )
+
+
+def build_proxy_mcp_server(store: ServerConfigStore, domain_store: DomainStore) -> Server:
     server = Server(
         "mcp-proxy",
         version="0.1.0",
-        instructions=(
-            "This server aggregates MCP tools from upstreams registered in the proxy admin UI. "
-            "Each tool is named `<server-id>/<original-tool-name>`."
-        ),
+        instructions=_instructions(),
     )
+
+    def _domain_ids() -> list[str]:
+        ids = sorted({d.id for d in domain_store.list_records()})
+        return ids if ids else ["default"]
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        out: list[mcp_types.Tool] = []
-        for s in store.list_servers():
-            if not s.enabled:
-                continue
+        ids = _domain_ids()
+        dom = _domain_enum_schema(
+            ids,
+            "Domain id (unique). Choose one; configure domains in the proxy admin UI.",
+        )
+        dom_opt = _domain_enum_schema(
+            ids,
+            "Optional: restrict search to this domain id.",
+        )
+        return [
+            mcp_types.Tool(
+                name="searchToolsForDomain",
+                description=(
+                    "List every tool available in a single logical domain. "
+                    "Domains group upstream MCP servers (e.g. smart home vs network)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {"domain": dom},
+                    "required": ["domain"],
+                },
+            ),
+            mcp_types.Tool(
+                name="searchTool",
+                description=(
+                    "Search tools by substring across tool name and description. "
+                    "Returns matching tools with toolName, domain, and inputSchema."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Substring to match (case-insensitive).",
+                        },
+                        "domain": dom_opt,
+                    },
+                    "required": ["query"],
+                },
+            ),
+            mcp_types.Tool(
+                name="callTool",
+                description=(
+                    "Execute an upstream tool by composite toolName from searchToolsForDomain or searchTool."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "toolName": {
+                            "type": "string",
+                            "description": "Format: `<server-id>/<upstream-tool-name>`.",
+                        },
+                        "arguments": {
+                            "type": "object",
+                            "description": "JSON object of parameters for the upstream tool.",
+                            "additionalProperties": True,
+                        },
+                    },
+                    "required": ["toolName"],
+                },
+            ),
+        ]
+
+    @server.call_tool()
+    async def call_tool(
+        name: str, arguments: dict | None
+    ) -> list[mcp_types.ContentBlock]:
+        args = arguments or {}
+
+        if name == "searchToolsForDomain":
+            dom = args.get("domain")
+            if not isinstance(dom, str) or not dom.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'domain' (string).",
+                    )
+                )
+            dom = dom.strip()
+            if dom not in domain_store.id_set():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown domain {dom!r}. Known: {sorted(domain_store.id_set())}",
+                    )
+                )
+            defs = await _collect_all_tool_defs(store, dom)
+            return [
+                mcp_types.TextContent(
+                    type="text",
+                    text=json.dumps(defs, indent=2, default=str),
+                )
+            ]
+
+        if name == "searchTool":
+            query = args.get("query")
+            if not isinstance(query, str) or not query.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'query' (non-empty string).",
+                    )
+                )
+            q = query.strip().lower()
+            dom_filter: str | None = None
+            if "domain" in args and args["domain"] is not None:
+                if not isinstance(args["domain"], str) or not args["domain"].strip():
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message="If provided, 'domain' must be a non-empty string.",
+                        )
+                    )
+                dom_filter = args["domain"].strip()
+                if dom_filter not in domain_store.id_set():
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message=f"Unknown domain {dom_filter!r}.",
+                        )
+                    )
+
+            all_defs = await _collect_all_tool_defs(store, dom_filter)
+            matches: list[dict[str, Any]] = []
+            for d in all_defs:
+                tn = str(d.get("toolName", "")).lower()
+                desc = str(d.get("description", "")).lower()
+                if q in tn or q in desc:
+                    matches.append(d)
+
+            def _rank(m: dict[str, Any]) -> tuple[int, str]:
+                tn = str(m.get("toolName", "")).lower()
+                if tn == q:
+                    return (0, tn)
+                if tn.startswith(q):
+                    return (1, tn)
+                return (2, tn)
+
+            matches.sort(key=_rank)
+            matches = matches[:25]
+            return [
+                mcp_types.TextContent(
+                    type="text",
+                    text=json.dumps(matches, indent=2, default=str),
+                )
+            ]
+
+        if name == "callTool":
+            tool_name = args.get("toolName")
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'toolName' (string).",
+                    )
+                )
+            tool_args = args.get("arguments")
+            if tool_args is not None and not isinstance(tool_args, dict):
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'arguments' must be a JSON object when provided.",
+                    )
+                )
+            sid, orig = _split_proxy_tool_name(tool_name.strip())
+            upstream = store.get(sid)
+            if upstream is None or not upstream.enabled:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown or disabled upstream server {sid!r}",
+                    )
+                )
             try:
                 with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-                    async with _upstream_streams(s) as (read_stream, write_stream):
+                    async with _upstream_streams(upstream) as (read_stream, write_stream):
                         async with ClientSession(
                             read_stream,
                             write_stream,
                             client_info=mcp_types.Implementation(name="mcp-proxy", version="0.1.0"),
                         ) as session:
                             await session.initialize()
-                            res = await session.list_tools()
-                            for t in res.tools:
-                                composite = f"{s.id}/{t.name}"
-                                desc = (t.description or "").strip()
-                                suffix = f"[upstream: {s.id}]"
-                                if suffix not in desc:
-                                    desc = f"{desc} {suffix}".strip() if desc else suffix
-                                out.append(
-                                    mcp_types.Tool(
-                                        name=composite,
-                                        description=desc,
-                                        inputSchema=t.inputSchema,
-                                    )
-                                )
-            except TimeoutError:
-                log.warning("list_tools: timeout for upstream %s", s.id)
-            except Exception:
-                log.exception("list_tools: skip upstream %s", s.id)
-        return out
+                            result = await session.call_tool(orig, tool_args)
+            except McpError:
+                raise
+            except TimeoutError as e:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INTERNAL_ERROR,
+                        message=f"Upstream {sid!r} timed out",
+                    )
+                ) from e
+            except Exception as e:
+                log.exception("callTool failed for %s", tool_name)
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INTERNAL_ERROR,
+                        message=str(e) or type(e).__name__,
+                    )
+                ) from e
+            return list(result.content or [])
 
-    @server.call_tool()
-    async def call_tool(
-        name: str, arguments: dict | None
-    ) -> list[mcp_types.ContentBlock]:
-        sid, orig = _split_proxy_tool_name(name)
-        upstream = store.get(sid)
-        if upstream is None or not upstream.enabled:
-            raise McpError(
-                mcp_types.ErrorData(
-                    code=mcp_types.INVALID_PARAMS,
-                    message=f"Unknown or disabled upstream server {sid!r}",
-                )
+        raise McpError(
+            mcp_types.ErrorData(
+                code=mcp_types.METHOD_NOT_FOUND,
+                message=f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, or callTool.",
             )
-        try:
-            with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-                async with _upstream_streams(upstream) as (read_stream, write_stream):
-                    async with ClientSession(
-                        read_stream,
-                        write_stream,
-                        client_info=mcp_types.Implementation(name="mcp-proxy", version="0.1.0"),
-                    ) as session:
-                        await session.initialize()
-                        result = await session.call_tool(orig, arguments)
-        except McpError:
-            raise
-        except TimeoutError as e:
-            raise McpError(
-                mcp_types.ErrorData(
-                    code=mcp_types.INTERNAL_ERROR,
-                    message=f"Upstream {sid!r} timed out",
-                )
-            ) from e
-        except Exception as e:
-            log.exception("call_tool failed for %s", name)
-            raise McpError(
-                mcp_types.ErrorData(
-                    code=mcp_types.INTERNAL_ERROR,
-                    message=str(e) or type(e).__name__,
-                )
-            ) from e
-        return list(result.content or [])
+        )
 
     return server

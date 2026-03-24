@@ -12,6 +12,7 @@ from starlette.types import Receive, Scope, Send
 from mcp_proxy.api.routes import router as api_router
 from mcp_proxy.client_store import ClientTokenStore
 from mcp_proxy.config_store import ServerConfigStore
+from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
 from mcp_proxy.security import AuthEnforcementMiddleware
 from mcp_proxy.settings import Settings
@@ -63,10 +64,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.server_store = ServerConfigStore(settings.data_dir)
     app.state.client_store = ClientTokenStore(settings.data_dir)
+    app.state.domain_store = DomainStore(settings.data_dir)
+    app.state.domain_store.ensure_default_domain()
 
     if StreamableHTTPSessionManager is None:
         raise RuntimeError("mcp package is missing StreamableHTTPSessionManager; upgrade modelcontextprotocol")
-    mcp_sdk_server = build_proxy_mcp_server(app.state.server_store)
+    mcp_sdk_server = build_proxy_mcp_server(app.state.server_store, app.state.domain_store)
     app.state.mcp_session_manager = StreamableHTTPSessionManager(
         mcp_sdk_server,
         stateless=False,
