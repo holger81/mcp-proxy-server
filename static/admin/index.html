@@ -212,7 +212,10 @@
       Registry: <code>/data/config/servers.json</code>. Inspect calls open a short-lived MCP session to the upstream
       (stdio, streamable HTTP, or legacy SSE).
     </p>
-    <p><a href="/api/health"><code>/api/health</code></a></p>
+    <p>
+      <a href="/api/health"><code>/api/health</code></a> ·
+      <a href="/api/catalog/presets"><code>/api/catalog/presets</code></a>
+    </p>
 
     <nav class="tabs" role="tablist">
       <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
@@ -221,6 +224,14 @@
 
     <section id="panel-register" role="tabpanel">
       <h2>Add MCP server</h2>
+      <fieldset id="blk-catalog">
+        <legend>Add from catalog</legend>
+        <label for="catalog-preset">Preset</label>
+        <select id="catalog-preset" autocomplete="off">
+          <option value="">— Custom (manual) —</option>
+        </select>
+        <p id="catalog-hint" class="hint hidden"></p>
+      </fieldset>
       <form id="add-form">
         <label for="f-id">Server ID <span class="hint">(lowercase slug)</span></label>
         <input id="f-id" name="id" type="text" required autocomplete="off" placeholder="my-upstream" />
@@ -343,6 +354,11 @@
     <script>
       (function () {
         const api = "/api/servers";
+        const catalogApi = "/api/catalog/presets";
+        const catalogSelect = document.getElementById("catalog-preset");
+        const catalogHint = document.getElementById("catalog-hint");
+        let catalogPresets = [];
+
         const tbody = document.getElementById("srv-body");
         const table = document.getElementById("srv-table");
         const empty = document.getElementById("list-empty");
@@ -358,6 +374,12 @@
         const editMsg = document.getElementById("edit-msg");
         const eBlkHttp = document.getElementById("e-blk-http");
         const eBlkStdio = document.getElementById("e-blk-stdio");
+
+        function escapeHtml(s) {
+          const d = document.createElement("div");
+          d.textContent = s == null ? "" : String(s);
+          return d.innerHTML;
+        }
 
         function parseJsonObject(text, label) {
           const t = (text || "").trim();
@@ -578,6 +600,81 @@
           });
         });
 
+        function applyCatalogPreset(pid) {
+          if (!pid) {
+            catalogHint.classList.add("hidden");
+            catalogHint.innerHTML = "";
+            return;
+          }
+          const p = catalogPresets.find((x) => x.id === pid);
+          if (!p) return;
+          document.getElementById("f-id").value = p.default_server_id || "";
+          document.getElementById("f-name").value = p.display_name || "";
+          if (p.type === "stdio") {
+            form.querySelector('input[name="type"][value="stdio"]').checked = true;
+            blkHttp.classList.add("hidden");
+            blkStdio.classList.remove("hidden");
+            document.getElementById("f-cmd").value = p.command || "";
+            document.getElementById("f-cwd").value = p.cwd || "";
+            document.getElementById("f-env").value = JSON.stringify(p.env && Object.keys(p.env).length ? p.env : {}, null, 2);
+          } else {
+            form.querySelector('input[name="type"][value="http"]').checked = true;
+            blkHttp.classList.remove("hidden");
+            blkStdio.classList.add("hidden");
+            document.getElementById("f-url").value = p.url || "";
+            document.getElementById("f-headers").value = JSON.stringify(
+              p.headers && Object.keys(p.headers).length ? p.headers : {},
+              null,
+              2,
+            );
+            const ht = p.http_transport === "sse" ? "sse" : "streamable-http";
+            form.querySelectorAll('input[name="http_transport"]').forEach((el) => {
+              el.checked = el.value === ht;
+            });
+          }
+          let hint = (p.description || "").trim();
+          if (p.source_url) {
+            hint +=
+              (hint ? " " : "") +
+              '<a href="' +
+              p.source_url.replace(/"/g, "") +
+              '" target="_blank" rel="noopener">Project / docs</a>.';
+          }
+          if (p.package_hint) {
+            hint += (hint ? " " : "") + "Install: <code>" + escapeHtml(p.package_hint) + "</code>";
+          }
+          if (hint) {
+            catalogHint.innerHTML = hint;
+            catalogHint.classList.remove("hidden");
+          } else {
+            catalogHint.classList.add("hidden");
+            catalogHint.innerHTML = "";
+          }
+        }
+
+        catalogSelect.addEventListener("change", () => {
+          applyCatalogPreset(catalogSelect.value);
+        });
+
+        async function loadCatalog() {
+          try {
+            const r = await fetch(catalogApi);
+            if (!r.ok) return;
+            catalogPresets = await r.json();
+            if (!Array.isArray(catalogPresets)) return;
+            const sel = catalogSelect;
+            while (sel.options.length > 1) sel.remove(1);
+            for (const p of catalogPresets) {
+              const opt = document.createElement("option");
+              opt.value = p.id;
+              opt.textContent = p.display_name || p.id;
+              sel.appendChild(opt);
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        }
+
         form.addEventListener("submit", async (ev) => {
           ev.preventDefault();
           formMsg.innerHTML = "";
@@ -621,6 +718,8 @@
           }
           formMsg.innerHTML = '<div class="msg ok">Saved.</div>';
           form.reset();
+          catalogSelect.value = "";
+          applyCatalogPreset("");
           document.getElementById("f-enabled").checked = true;
           form.querySelector('input[name="type"][value="http"]').checked = true;
           form.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
@@ -629,6 +728,7 @@
           loadServers();
         });
 
+        loadCatalog();
         loadServers();
       })();
     </script>

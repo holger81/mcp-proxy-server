@@ -23,4 +23,4 @@ mcp-proxy = "mcp_proxy.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mcp_proxy = ["py.typed"]
+mcp_proxy = ["py.typed", "catalog/*.json"]
