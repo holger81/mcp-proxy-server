@@ -31,6 +31,8 @@ On **Admin**, **Install stdio MCP** runs **`pip`** (PyPI) or **`npm install`** (
 
 ## Use with Portainer
 
+Variables you type under **Environment** in a Portainer stack are **not** visible inside the container unless **`docker-compose.yml` maps them** into `services.*.environment` (this repo’s Compose file uses `${MCP_PROXY_ADMIN_PASSWORD:-}` etc.). After changing the stack file from Git, **redeploy** the stack so the container is recreated.
+
 1. Commit and push this repo to Git (e.g. GitHub).
 2. In **Portainer** → **Stacks** → **Add stack** → **Repository** (or **Web editor**):
    - Point **Repository URL** at your repo and set the **Compose path** to `docker-compose.yml`, **or** paste the contents of `docker-compose.yml`.

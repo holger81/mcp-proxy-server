@@ -11,13 +11,12 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
-      # Optional: set a strong admin password and a random session secret (≥16 chars), OR use *_FILE
-      # pointing at Docker secret files (e.g. /run/secrets/...). On startup, logs show whether auth is enabled.
-      # MCP_PROXY_ADMIN_PASSWORD: "change-me"
-      # MCP_PROXY_SESSION_SECRET: "use-a-long-random-string"
-      # MCP_PROXY_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
-      # MCP_PROXY_SESSION_SECRET_FILE: /run/secrets/session_secret
-      # Behind HTTPS, set MCP_PROXY_SECURE_COOKIES: "true"
+      # Pass stack / .env values into the container (Portainer “Environment” only applies if referenced here).
+      MCP_PROXY_ADMIN_PASSWORD: ${MCP_PROXY_ADMIN_PASSWORD:-}
+      MCP_PROXY_SESSION_SECRET: ${MCP_PROXY_SESSION_SECRET:-}
+      MCP_PROXY_SECURE_COOKIES: ${MCP_PROXY_SECURE_COOKIES:-false}
+      MCP_PROXY_ADMIN_PASSWORD_FILE: ${MCP_PROXY_ADMIN_PASSWORD_FILE:-}
+      MCP_PROXY_SESSION_SECRET_FILE: ${MCP_PROXY_SESSION_SECRET_FILE:-}
     restart: unless-stopped
 
 volumes:
