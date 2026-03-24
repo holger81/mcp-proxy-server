@@ -58,7 +58,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="MCP Proxy",
         version="0.1.0",
-        description="Aggregates upstream MCP servers; Streamable HTTP on /mcp.",
+        description=(
+            "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
+            "LLM clients only see searchToolsForDomain, searchTool, and callTool — discover tools by domain "
+            "or search, then callTool with the composite toolName and schema-driven arguments."
+        ),
         lifespan=lifespan,
     )
     app.state.settings = settings
