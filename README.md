@@ -25,7 +25,7 @@ docker compose up -d --build
 
 Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
 
-On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. JSON API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`** (same JSON shape as POST; id must match URL), **`DELETE /api/servers/{id}`**. For each server, **`GET /api/servers/{id}/inspect?kind=tools|resources|prompts|capabilities`** runs a short MCP session and returns **`list_tools`**, **`list_resources`**, **`list_prompts`**, or the **`initialize`** result. HTTP upstreams: **`streamable-http`** (default, full MCP streamable client), **`sse`** (legacy), or **`stateless-post`** (one JSON-RPC per POST — use for **Home Assistant** **`/api/mcp`**).
+On **Admin**, you can add **HTTP** (remote MCP URL) or **stdio** (command line) servers; they are saved to **`/data/config/servers.json`** on the container volume. JSON API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`** (same JSON shape as POST; id must match URL), **`DELETE /api/servers/{id}`**. For each server, **`GET /api/servers/{id}/inspect?kind=tools|resources|prompts|capabilities`** runs a short MCP session and returns **`list_tools`**, **`list_resources`**, **`list_prompts`**, or the **`initialize`** result. HTTP upstreams: **`streamable-http`** (default; tries one JSON-RPC POST per request first for hosts like **Home Assistant** **`/api/mcp`**, then the full streamable MCP client), or **`sse`** (legacy).
 
 ## Use with Portainer
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Literal
 
@@ -18,6 +18,10 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp_proxy.models import UpstreamServer
 
 InspectKind = Literal["tools", "resources", "prompts", "capabilities"]
+
+
+class _SimplePostUnsupported(Exception):
+    """One-shot JSON-RPC POST is not viable for this host; use the full streamable MCP client."""
 
 
 def _is_wrapper_message(text: str) -> bool:
@@ -81,8 +85,6 @@ async def _upstream_streams(
 
     assert server.url and server.http_transport
     headers = server.headers or {}
-    if server.http_transport == "stateless-post":
-        raise RuntimeError("stateless-post does not use stream transports")
     if server.http_transport == "sse":
         async with sse_client(server.url, headers=headers or None) as streams:
             yield streams
@@ -93,75 +95,87 @@ async def _upstream_streams(
             yield streams
 
 
-async def _run_inspect_stateless_post(server: UpstreamServer, kind: InspectKind) -> dict:
-    """Home Assistant and similar hosts expose POST /api/mcp with one JSON-RPC per request (no GET/SSE)."""
+async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: InspectKind) -> dict:
+    """One JSON-RPC POST per request (e.g. Home Assistant /api/mcp), multimodal mcpClient.js style.
+
+    String UUID ids, application/json; no initialize before tools/list / resources/list / prompts/list.
+    Capabilities uses a single initialize with protocolVersion 2024-11-05.
+    """
     assert server.url
     url = str(server.url).strip()
     hdrs = {"Accept": "application/json", "Content-Type": "application/json", **(server.headers or {})}
-    ids = iter(range(1, 100_000))
+
+    def rpc(method: str, params: dict) -> dict:
+        return {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params,
+        }
 
     async def post_json(client: httpx.AsyncClient, payload: dict) -> dict | None:
-        r = await client.post(url, json=payload, headers=hdrs)
-        r.raise_for_status()
+        try:
+            r = await client.post(url, json=payload, headers=hdrs)
+        except httpx.RequestError as e:
+            raise _SimplePostUnsupported(str(e) or type(e).__name__) from e
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else 0
+            if code in (401, 403):
+                raise
+            raise _SimplePostUnsupported(f"HTTP {code}") from e
         if r.status_code in (202, 204) or not (r.content or b"").strip():
             return None
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError as e:
+            raise _SimplePostUnsupported("response is not JSON") from e
+        if not isinstance(data, dict):
+            raise _SimplePostUnsupported("response JSON is not an object")
         if data.get("error") is not None:
             err = data["error"]
             if isinstance(err, dict):
-                raise RuntimeError(err.get("message", str(err)))
-            raise RuntimeError(str(err))
+                msg = err.get("message", str(err))
+            else:
+                msg = str(err)
+            raise _SimplePostUnsupported(msg)
         return data.get("result")
 
-    init_params = mcp_types.InitializeRequestParams(
-        protocol_version=mcp_types.LATEST_PROTOCOL_VERSION,
-        capabilities=mcp_types.ClientCapabilities(),
-        client_info=mcp_types.Implementation(name="mcp-proxy-admin", version="0.1.0"),
-    )
-    # Wire format must use camelCase (protocolVersion, clientInfo). model_dump(mode="json")
-    # can still emit snake_case; model_dump_json(by_alias=True) matches MCP / Home Assistant.
-    init_body = {
-        "jsonrpc": "2.0",
-        "id": next(ids),
-        "method": "initialize",
-        "params": json.loads(init_params.model_dump_json(by_alias=True, exclude_none=True)),
-    }
-
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-        init_result = await post_json(client, init_body)
-        if init_result is None:
-            raise RuntimeError(
-                "initialize returned an empty response — for Home Assistant use HTTP mode "
-                "'Stateless POST' and URL /api/mcp (not the full streamable MCP client)."
-            )
-        init_model = mcp_types.InitializeResult.model_validate(init_result)
-
-        await post_json(client, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-
         if kind == "capabilities":
+            init_result = await post_json(
+                client,
+                rpc(
+                    "initialize",
+                    {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "mcp-proxy-admin", "version": "0.1.0"},
+                    },
+                ),
+            )
+            if init_result is None:
+                raise _SimplePostUnsupported("initialize returned an empty response")
+            init_model = mcp_types.InitializeResult.model_validate(init_result)
             return {
                 "kind": kind,
                 "initialize": init_model.model_dump(mode="json", by_alias=True, exclude_none=True),
             }
+
         if kind == "tools":
-            res = await post_json(
-                client,
-                {"jsonrpc": "2.0", "id": next(ids), "method": "tools/list", "params": {}},
-            )
+            res = await post_json(client, rpc("tools/list", {}))
             if res is None:
-                raise RuntimeError("tools/list returned an empty response")
+                raise _SimplePostUnsupported("tools/list returned an empty response")
             ltr = mcp_types.ListToolsResult.model_validate(res)
             return {
                 "kind": kind,
                 "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in ltr.tools],
             }
         if kind == "resources":
-            res = await post_json(
-                client,
-                {"jsonrpc": "2.0", "id": next(ids), "method": "resources/list", "params": {}},
-            )
+            res = await post_json(client, rpc("resources/list", {}))
             if res is None:
-                raise RuntimeError("resources/list returned an empty response")
+                raise _SimplePostUnsupported("resources/list returned an empty response")
             lr = mcp_types.ListResourcesResult.model_validate(res)
             return {
                 "kind": kind,
@@ -170,12 +184,9 @@ async def _run_inspect_stateless_post(server: UpstreamServer, kind: InspectKind)
                 ],
             }
         if kind == "prompts":
-            res = await post_json(
-                client,
-                {"jsonrpc": "2.0", "id": next(ids), "method": "prompts/list", "params": {}},
-            )
+            res = await post_json(client, rpc("prompts/list", {}))
             if res is None:
-                raise RuntimeError("prompts/list returned an empty response")
+                raise _SimplePostUnsupported("prompts/list returned an empty response")
             lp = mcp_types.ListPromptsResult.model_validate(res)
             return {
                 "kind": kind,
@@ -187,44 +198,55 @@ async def _run_inspect_stateless_post(server: UpstreamServer, kind: InspectKind)
 
 
 async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
-    if server.type == "http" and server.http_transport == "stateless-post":
-        return await _run_inspect_stateless_post(server, kind)
+    simple_post_exc: _SimplePostUnsupported | None = None
+    if server.type == "http" and server.http_transport == "streamable-http":
+        try:
+            return await _run_inspect_simple_jsonrpc_post(server, kind)
+        except _SimplePostUnsupported as e:
+            simple_post_exc = e
 
-    async with _upstream_streams(server) as (read_stream, write_stream):
-        async with ClientSession(
-            read_stream,
-            write_stream,
-            client_info=mcp_types.Implementation(name="mcp-proxy-admin", version="0.1.0"),
-        ) as session:
-            init = await session.initialize()
-            if kind == "capabilities":
-                return {
-                    "kind": kind,
-                    "initialize": init.model_dump(mode="json", by_alias=True, exclude_none=True),
-                }
-            if kind == "tools":
-                result = await session.list_tools()
-                return {
-                    "kind": kind,
-                    "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in result.tools],
-                }
-            if kind == "resources":
-                result = await session.list_resources()
-                return {
-                    "kind": kind,
-                    "resources": [
-                        r.model_dump(mode="json", by_alias=True, exclude_none=True) for r in result.resources
-                    ],
-                }
-            if kind == "prompts":
-                result = await session.list_prompts()
-                return {
-                    "kind": kind,
-                    "prompts": [
-                        p.model_dump(mode="json", by_alias=True, exclude_none=True) for p in result.prompts
-                    ],
-                }
-            raise ValueError(f"unknown inspect kind: {kind}")
+    try:
+        async with _upstream_streams(server) as (read_stream, write_stream):
+            async with ClientSession(
+                read_stream,
+                write_stream,
+                client_info=mcp_types.Implementation(name="mcp-proxy-admin", version="0.1.0"),
+            ) as session:
+                init = await session.initialize()
+                if kind == "capabilities":
+                    return {
+                        "kind": kind,
+                        "initialize": init.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    }
+                if kind == "tools":
+                    result = await session.list_tools()
+                    return {
+                        "kind": kind,
+                        "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in result.tools],
+                    }
+                if kind == "resources":
+                    result = await session.list_resources()
+                    return {
+                        "kind": kind,
+                        "resources": [
+                            r.model_dump(mode="json", by_alias=True, exclude_none=True) for r in result.resources
+                        ],
+                    }
+                if kind == "prompts":
+                    result = await session.list_prompts()
+                    return {
+                        "kind": kind,
+                        "prompts": [
+                            p.model_dump(mode="json", by_alias=True, exclude_none=True) for p in result.prompts
+                        ],
+                    }
+                raise ValueError(f"unknown inspect kind: {kind}")
+    except Exception as e:
+        if simple_post_exc is not None:
+            raise RuntimeError(
+                f"{upstream_error_detail(e)} (simple JSON-RPC POST first: {simple_post_exc})"
+            ) from e
+        raise
 
 
 async def run_inspect_with_timeout(server: UpstreamServer, kind: InspectKind, timeout: float = 60.0) -> dict:

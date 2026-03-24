@@ -18,7 +18,7 @@ def _split_command(v: Any) -> list[str] | None:
     raise TypeError("command must be a string or list of strings")
 
 
-HttpTransport = Literal["streamable-http", "sse", "stateless-post"]
+HttpTransport = Literal["streamable-http", "sse"]
 
 
 class UpstreamServer(BaseModel):
@@ -36,8 +36,8 @@ class UpstreamServer(BaseModel):
     http_transport: HttpTransport | None = Field(
         default=None,
         description=(
-            "For type=http: streamable-http (full MCP streamable client), "
-            "sse (legacy HTTP+SSE), or stateless-post (one JSON-RPC per POST, e.g. Home Assistant /api/mcp)."
+            "For type=http: streamable-http (tries one JSON-RPC POST per request first, then full streamable "
+            "client), or sse (legacy HTTP+SSE)."
         ),
     )
     headers: dict[str, str] = Field(default_factory=dict)
@@ -69,6 +69,13 @@ class UpstreamServer(BaseModel):
     @classmethod
     def coerce_command(cls, v: Any) -> list[str] | None:
         return _split_command(v)
+
+    @field_validator("http_transport", mode="before")
+    @classmethod
+    def migrate_legacy_stateless_post(cls, v: Any) -> Any:
+        if v == "stateless-post":
+            return "streamable-http"
+        return v
 
     @model_validator(mode="after")
     def type_consistency(self) -> "UpstreamServer":

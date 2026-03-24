@@ -239,12 +239,10 @@
           <div class="row">
             <label><input type="radio" name="http_transport" value="streamable-http" checked /> Streamable HTTP</label>
             <label><input type="radio" name="http_transport" value="sse" /> Legacy HTTP + SSE</label>
-            <label><input type="radio" name="http_transport" value="stateless-post" /> Stateless POST</label>
           </div>
           <p class="hint">
-            Streamable HTTP: full MCP client (POST+GET/SSE). SSE: legacy SSE URL.
-            <strong>Stateless POST</strong> for <strong>Home Assistant</strong>
-            <code>/api/mcp</code> (one JSON-RPC per request; not compatible with the streamable client).
+            Streamable HTTP: tries a single JSON-RPC POST first (works with <strong>Home Assistant</strong>
+            <code>/api/mcp</code>), then the full streamable MCP client if needed. SSE: legacy SSE URL.
           </p>
           <label for="f-url">MCP endpoint URL</label>
           <input id="f-url" type="text" placeholder="http://other-container:8080/mcp" />
@@ -316,7 +314,6 @@
             <div class="row">
               <label><input type="radio" name="e-http_transport" value="streamable-http" /> Streamable HTTP</label>
               <label><input type="radio" name="e-http_transport" value="sse" /> Legacy HTTP + SSE</label>
-              <label><input type="radio" name="e-http_transport" value="stateless-post" /> Stateless POST</label>
             </div>
             <label for="e-url">MCP endpoint URL</label>
             <input id="e-url" type="text" />
@@ -387,7 +384,6 @@
           if (s.type !== "http") return "—";
           const t = s.http_transport || "streamable-http";
           if (t === "sse") return "SSE";
-          if (t === "stateless-post") return "Stateless POST";
           return "Streamable";
         }
 
@@ -407,12 +403,7 @@
           });
           eBlkHttp.classList.toggle("hidden", s.type !== "http");
           eBlkStdio.classList.toggle("hidden", s.type !== "stdio");
-          const ht =
-            s.http_transport === "sse"
-              ? "sse"
-              : s.http_transport === "stateless-post"
-                ? "stateless-post"
-                : "streamable-http";
+          const ht = s.http_transport === "sse" ? "sse" : "streamable-http";
           editForm.querySelectorAll('input[name="e-http_transport"]').forEach((el) => {
             el.checked = el.value === ht;
           });
