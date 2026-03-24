@@ -421,9 +421,10 @@
           ban.classList.remove("hidden");
           ban.innerHTML =
             "<strong>No admin password is set.</strong> Anyone who can reach this service can use the admin UI and API. " +
-            "To require a password, set environment variables <code>MCP_PROXY_ADMIN_PASSWORD</code> and " +
-            "<code>MCP_PROXY_SESSION_SECRET</code> (at least 16 random characters), then restart the container. " +
-            'After that, open <a href="/admin/login.html">Sign in</a>.';
+            "Set <code>MCP_PROXY_ADMIN_PASSWORD</code> and <code>MCP_PROXY_SESSION_SECRET</code> (≥16 random chars), " +
+            "or Docker secret files via <code>MCP_PROXY_ADMIN_PASSWORD_FILE</code> and " +
+            "<code>MCP_PROXY_SESSION_SECRET_FILE</code>, then restart. Check container logs for “Authentication is enabled”. " +
+            'Then use <a href="/admin/login.html">Sign in</a>.';
         }
 
         const api = "/api/servers";

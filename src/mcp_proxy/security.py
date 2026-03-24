@@ -17,6 +17,18 @@ if TYPE_CHECKING:
 SESSION_ADMIN_KEY = "admin"
 
 
+def _should_redirect_browser_to_login(request: Request) -> bool:
+    """HTML navigations and generic Accept values get a login redirect; JSON-only clients get 401."""
+    if request.method != "GET":
+        return False
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/html" in accept or "application/xhtml+xml" in accept:
+        return True
+    if "application/json" in accept and "text/html" not in accept and "application/xhtml+xml" not in accept:
+        return False
+    return True
+
+
 def admin_password_digest(password: str, session_secret: str) -> bytes:
     return hashlib.sha256(f"{session_secret}\0{password}".encode("utf-8")).digest()
 
@@ -93,16 +105,14 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if request.session.get(SESSION_ADMIN_KEY):
                 return await call_next(request)
-            accept = request.headers.get("accept", "")
-            if request.method == "GET" and "text/html" in accept:
+            if _should_redirect_browser_to_login(request):
                 return RedirectResponse(url="/admin/login.html", status_code=302)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         if path.startswith("/docs") or path == "/openapi.json":
             if request.session.get(SESSION_ADMIN_KEY):
                 return await call_next(request)
-            accept = request.headers.get("accept", "")
-            if request.method == "GET" and "text/html" in accept:
+            if _should_redirect_browser_to_login(request):
                 return RedirectResponse(url="/admin/login.html", status_code=302)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 

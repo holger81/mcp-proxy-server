@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    settings.log_auth_state()
     app = FastAPI(
         title="MCP Proxy",
         version="0.1.0",

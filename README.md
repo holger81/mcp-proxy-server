@@ -49,12 +49,29 @@ If your Portainer environment cannot build from Git, build the image elsewhere, 
 | `MCP_PROXY_ALLOW_NPM_INSTALL` | `true` | Allow npm in **register-stdio-package** (`npm`). Requires Node in the image. |
 | `MCP_PROXY_STATIC_ROOT` | `/app/static` | Static files root (set in image) |
 | `MCP_PROXY_ADMIN_PASSWORD` | *(empty)* | If set, enables auth: admin UI login + protected API |
+| `MCP_PROXY_ADMIN_PASSWORD_FILE` | *(empty)* | If set, password is read from this file (overrides `MCP_PROXY_ADMIN_PASSWORD`). Use with Docker/Portainer **secrets**. |
 | `MCP_PROXY_SESSION_SECRET` | *(empty)* | Required when admin password is set; use a long random string (≥16 chars) |
+| `MCP_PROXY_SESSION_SECRET_FILE` | *(empty)* | If set, session secret is read from this file (overrides `MCP_PROXY_SESSION_SECRET`). |
 | `MCP_PROXY_SECURE_COOKIES` | `false` | Set `true` when serving over HTTPS so session cookies are `Secure` |
 
 ### Authentication
 
-When **`MCP_PROXY_ADMIN_PASSWORD`** is non-empty, **`MCP_PROXY_SESSION_SECRET`** must be set (at least 16 characters). In that mode:
+When a non-empty admin password is loaded (from **`MCP_PROXY_ADMIN_PASSWORD`** or **`MCP_PROXY_ADMIN_PASSWORD_FILE`**), a session secret of at least 16 characters must also be loaded (from **`MCP_PROXY_SESSION_SECRET`** or **`MCP_PROXY_SESSION_SECRET_FILE`**). On startup the process logs either **“Authentication is enabled”** or **“Authentication is disabled”** — if you expected a password but see “disabled”, the variables are not reaching the container (wrong service, typo, or secrets only mounted as files without `*_FILE`).
+
+**Docker Compose secrets** usually appear as files under **`/run/secrets/...`**. Point the app at them, for example:
+
+```yaml
+environment:
+  MCP_PROXY_ADMIN_PASSWORD_FILE: /run/secrets/mcp_admin_password
+  MCP_PROXY_SESSION_SECRET_FILE: /run/secrets/mcp_session_secret
+secrets:
+  mcp_admin_password:
+    file: ./secrets/admin_password.txt
+  mcp_session_secret:
+    file: ./secrets/session_secret.txt
+```
+
+When authentication is enabled:
 
 - **`GET /api/health`** and **`/api/auth/*`** stay public.
 - **Admin UI** (`/admin/`, except **`/admin/login.html`**) requires signing in with the admin password (session cookie).
