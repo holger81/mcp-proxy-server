@@ -4,9 +4,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from mcp_proxy.api.routes import router as api_router
+from mcp_proxy.client_store import ClientTokenStore
 from mcp_proxy.config_store import ServerConfigStore
+from mcp_proxy.security import AuthEnforcementMiddleware
 from mcp_proxy.settings import Settings
 
 
@@ -27,6 +30,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.server_store = ServerConfigStore(settings.data_dir)
+    app.state.client_store = ClientTokenStore(settings.data_dir)
+
+    session_key = (
+        settings.session_secret.strip()
+        if settings.auth_enabled
+        else "dev-no-auth-session-key-do-not-use"
+    )
+    app.add_middleware(AuthEnforcementMiddleware, settings=settings)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=session_key,
+        max_age=60 * 60 * 24 * 7,
+        same_site="lax",
+        https_only=settings.secure_cookies,
+        session_cookie="mcp_proxy_session",
+    )
 
     app.include_router(api_router, prefix="/api")
 
@@ -37,7 +56,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/mcp")
     async def mcp_get() -> JSONResponse:
-        # Streamable HTTP: GET may open an SSE stream; not implemented in scaffold.
         return JSONResponse(
             status_code=405,
             content={"detail": "GET /mcp (SSE) not implemented yet; use POST for JSON-RPC."},

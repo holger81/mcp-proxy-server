@@ -169,6 +169,10 @@
         gap: 0.5rem;
         margin: 1.25rem 0 0.5rem;
         flex-wrap: wrap;
+        align-items: center;
+      }
+      .tabs .push-end {
+        margin-left: auto;
       }
       #inspect-out {
         margin-top: 1rem;
@@ -218,6 +222,8 @@
     <nav class="tabs" role="tablist">
       <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
       <button type="button" class="tab" data-tab="explore" role="tab" aria-selected="false">Explore servers</button>
+      <button type="button" class="tab" data-tab="clients" role="tab" aria-selected="false">API clients</button>
+      <button type="button" class="secondary push-end hidden" id="btn-logout">Log out</button>
     </nav>
 
     <section id="panel-register" role="tabpanel">
@@ -305,6 +311,34 @@
       <pre id="inspect-out" class="hidden"></pre>
     </section>
 
+    <section id="panel-clients" class="hidden" role="tabpanel">
+      <h2>API clients</h2>
+      <p class="hint">
+        Bearer tokens for scripts and integrations. Send
+        <code>Authorization: Bearer …</code> on <code>/api/</code> requests (servers, inspect, catalog, install — not
+        client management). Each token is shown only once when created.
+      </p>
+      <label for="client-label">Label <span class="hint">(your notes)</span></label>
+      <input id="client-label" type="text" autocomplete="off" placeholder="e.g. laptop automation" />
+      <button type="button" id="client-create">Create token</button>
+      <div id="client-msg"></div>
+      <pre id="client-token-once" class="hidden"></pre>
+      <h2>Existing clients</h2>
+      <button type="button" class="secondary small" id="client-refresh" style="margin-top: 0.5rem">Refresh</button>
+      <table id="clients-table" class="hidden" style="margin-top: 0.5rem">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Label</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="clients-body"></tbody>
+      </table>
+      <p id="clients-empty" class="hint">No clients yet.</p>
+    </section>
+
     <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
       <div class="dialog-inner">
         <h2 id="edit-dialog-title">Edit server</h2>
@@ -353,8 +387,22 @@
     </dialog>
 
     <script>
-      (function () {
+      (async function () {
+        function apiFetch(input, init) {
+          const o = init ? { ...init } : {};
+          o.credentials = "include";
+          return fetch(input, o);
+        }
+
+        const _meRes = await apiFetch("/api/auth/me");
+        const _me = await _meRes.json().catch(() => ({}));
+        if (_me.auth_enabled && !_me.logged_in) {
+          window.location.replace("/admin/login.html");
+          return;
+        }
+
         const api = "/api/servers";
+        const apiClients = "/api/clients";
         const wizGo = document.getElementById("wiz-go");
         const wizLog = document.getElementById("wiz-log");
         const wizMsg = document.getElementById("wiz-msg");
@@ -367,6 +415,17 @@
         const inspectOut = document.getElementById("inspect-out");
         const panelReg = document.getElementById("panel-register");
         const panelExp = document.getElementById("panel-explore");
+        const panelClients = document.getElementById("panel-clients");
+        const clientsBody = document.getElementById("clients-body");
+        const clientsTable = document.getElementById("clients-table");
+        const clientsEmpty = document.getElementById("clients-empty");
+        const clientMsg = document.getElementById("client-msg");
+        const btnLogout = document.getElementById("btn-logout");
+        if (_me.auth_enabled) btnLogout.classList.remove("hidden");
+        btnLogout.addEventListener("click", async () => {
+          await apiFetch("/api/auth/logout", { method: "POST" });
+          window.location.href = "/admin/login.html";
+        });
         const editDialog = document.getElementById("edit-dialog");
         const editForm = document.getElementById("edit-form");
         const editMsg = document.getElementById("edit-msg");
@@ -463,7 +522,7 @@
             editMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
             return;
           }
-          const res = await fetch(api + "/" + encodeURIComponent(id), {
+          const res = await apiFetch(api + "/" + encodeURIComponent(id), {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
@@ -488,7 +547,7 @@
           inspectOut.classList.remove("hidden");
           inspectOut.textContent = "Loading…";
           const url = api + "/" + encodeURIComponent(serverId) + "/inspect?kind=" + encodeURIComponent(kind);
-          const res = await fetch(url);
+          const res = await apiFetch(url);
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
             inspectOut.textContent = JSON.stringify({ error: data.detail || data }, null, 2);
@@ -498,7 +557,7 @@
         }
 
         async function loadServers() {
-          const res = await fetch(api);
+          const res = await apiFetch(api);
           if (!res.ok) {
             empty.classList.remove("hidden");
             empty.textContent = "Could not load servers (" + res.status + ").";
@@ -557,7 +616,7 @@
             del.textContent = "Remove";
             del.addEventListener("click", async () => {
               if (!confirm("Remove server “" + s.id + "”?")) return;
-              const r = await fetch(api + "/" + encodeURIComponent(s.id), { method: "DELETE" });
+              const r = await apiFetch(api + "/" + encodeURIComponent(s.id), { method: "DELETE" });
               if (!r.ok) {
                 alert("Delete failed: " + r.status);
                 return;
@@ -570,6 +629,86 @@
           }
         }
 
+        async function loadClients() {
+          clientMsg.innerHTML = "";
+          const res = await apiFetch(apiClients);
+          if (!res.ok) {
+            clientMsg.innerHTML =
+              '<div class="msg err">Failed to load clients (' + res.status + ")</div>";
+            return;
+          }
+          const list = await res.json();
+          clientsBody.replaceChildren();
+          if (!list.length) {
+            clientsTable.classList.add("hidden");
+            clientsEmpty.classList.remove("hidden");
+            return;
+          }
+          clientsEmpty.classList.add("hidden");
+          clientsTable.classList.remove("hidden");
+          for (const c of list) {
+            const tr = document.createElement("tr");
+            const tdId = document.createElement("td");
+            tdId.textContent = c.id;
+            const tdL = document.createElement("td");
+            tdL.textContent = c.label;
+            const tdC = document.createElement("td");
+            tdC.textContent = c.created_at || "—";
+            const tdA = document.createElement("td");
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "danger";
+            del.textContent = "Revoke";
+            del.addEventListener("click", async () => {
+              if (!confirm("Revoke token for “" + c.label + "”? It stops working immediately.")) return;
+              const r = await apiFetch(apiClients + "/" + encodeURIComponent(c.id), {
+                method: "DELETE",
+              });
+              if (!r.ok) {
+                alert("Revoke failed: " + r.status);
+                return;
+              }
+              loadClients();
+            });
+            tdA.appendChild(del);
+            tr.append(tdId, tdL, tdC, tdA);
+            clientsBody.appendChild(tr);
+          }
+        }
+
+        document.getElementById("client-create").addEventListener("click", async () => {
+          clientMsg.innerHTML = "";
+          document.getElementById("client-token-once").classList.add("hidden");
+          const label = document.getElementById("client-label").value.trim();
+          if (!label) {
+            clientMsg.innerHTML = '<div class="msg err">Label is required.</div>';
+            return;
+          }
+          const res = await apiFetch(apiClients, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const d = data.detail;
+            clientMsg.innerHTML =
+              '<div class="msg err">' +
+              (typeof d === "string" ? d : JSON.stringify(data)) +
+              "</div>";
+            return;
+          }
+          const pre = document.getElementById("client-token-once");
+          pre.classList.remove("hidden");
+          pre.textContent =
+            "Save this token now — it will not be shown again:\n\n" + (data.token || "") + "\n";
+          clientMsg.innerHTML = '<div class="msg ok">Client created.</div>';
+          document.getElementById("client-label").value = "";
+          loadClients();
+        });
+
+        document.getElementById("client-refresh").addEventListener("click", () => loadClients());
+
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
             const tab = btn.getAttribute("data-tab");
@@ -580,7 +719,9 @@
             });
             panelReg.classList.toggle("hidden", tab !== "register");
             panelExp.classList.toggle("hidden", tab !== "explore");
+            panelClients.classList.toggle("hidden", tab !== "clients");
             if (tab === "explore") loadServers();
+            if (tab === "clients") loadClients();
           });
         });
 
@@ -607,7 +748,7 @@
             return;
           }
           try {
-            const r = await fetch(api + "/register-stdio-package", {
+            const r = await apiFetch(api + "/register-stdio-package", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -665,7 +806,7 @@
             formMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
             return;
           }
-          const res = await fetch(api, {
+          const res = await apiFetch(api, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),

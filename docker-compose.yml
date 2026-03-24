@@ -11,6 +11,12 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
+      # Optional: set a strong admin password (≥1 char) and a random session secret (≥16 chars).
+      # When MCP_PROXY_ADMIN_PASSWORD is set, /admin and /api/* (except /api/health and /api/auth/*)
+      # require a signed-in admin session or Authorization: Bearer <client token>.
+      # MCP_PROXY_ADMIN_PASSWORD: "change-me"
+      # MCP_PROXY_SESSION_SECRET: "use-a-long-random-string"
+      # Behind HTTPS, set MCP_PROXY_SECURE_COOKIES: "true"
     restart: unless-stopped
 
 volumes:

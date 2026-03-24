@@ -46,6 +46,21 @@ If your Portainer environment cannot build from Git, build the image elsewhere, 
 | `MCP_PROXY_ALLOW_PYPI_INSTALL` | `true` | Allow pip in **register-stdio-package** (`pypi`). Set `false` if the admin UI is untrusted. |
 | `MCP_PROXY_ALLOW_NPM_INSTALL` | `true` | Allow npm in **register-stdio-package** (`npm`). Requires Node in the image. |
 | `MCP_PROXY_STATIC_ROOT` | `/app/static` | Static files root (set in image) |
+| `MCP_PROXY_ADMIN_PASSWORD` | *(empty)* | If set, enables auth: admin UI login + protected API |
+| `MCP_PROXY_SESSION_SECRET` | *(empty)* | Required when admin password is set; use a long random string (≥16 chars) |
+| `MCP_PROXY_SECURE_COOKIES` | `false` | Set `true` when serving over HTTPS so session cookies are `Secure` |
+
+### Authentication
+
+When **`MCP_PROXY_ADMIN_PASSWORD`** is non-empty, **`MCP_PROXY_SESSION_SECRET`** must be set (at least 16 characters). In that mode:
+
+- **`GET /api/health`** and **`/api/auth/*`** stay public.
+- **Admin UI** (`/admin/`, except **`/admin/login.html`**) requires signing in with the admin password (session cookie).
+- **API** (`/api/servers`, catalog, inspect, install, etc.) accepts either that session **or** **`Authorization: Bearer <token>`** from an API client created in the admin **API clients** tab.
+- **Client management** (`GET/POST/DELETE /api/clients`) is only available with an **admin session** (not with a client bearer token).
+- OpenAPI **`/docs`** and **`/openapi.json`** require an admin session when auth is on.
+
+Create tokens in **Admin → API clients**; each token is shown once. Revoking removes access immediately.
 
 ## Local development (optional)
 

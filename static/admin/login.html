@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in — MCP Proxy</title>
+    <style>
+      :root {
+        font-family: system-ui, -apple-system, sans-serif;
+        line-height: 1.5;
+        color: #e8e8ef;
+        background: #121218;
+      }
+      body {
+        max-width: 22rem;
+        margin: 4rem auto;
+        padding: 0 1.25rem;
+      }
+      h1 {
+        font-size: 1.35rem;
+        font-weight: 600;
+      }
+      label {
+        display: block;
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        color: #b8b8c8;
+      }
+      input[type="password"] {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 0.25rem;
+        padding: 0.5rem 0.6rem;
+        border: 1px solid #3a3a4a;
+        border-radius: 6px;
+        background: #1a1a22;
+        color: #f0f0f8;
+      }
+      button {
+        margin-top: 1.25rem;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 6px;
+        background: #3d5a9e;
+        color: #fff;
+        font-weight: 500;
+        cursor: pointer;
+        width: 100%;
+      }
+      button:hover {
+        background: #4d6ab4;
+      }
+      .msg {
+        margin-top: 1rem;
+        padding: 0.6rem 0.85rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+      }
+      .msg.err {
+        background: #3a2228;
+        color: #f0b4bc;
+      }
+      .msg.ok {
+        background: #223428;
+        color: #b4f0c8;
+      }
+      a {
+        color: #8cb4ff;
+      }
+      .hint {
+        font-size: 0.85rem;
+        color: #8888a0;
+        margin-top: 0.75rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MCP Proxy</h1>
+    <p class="hint">Sign in to open the admin UI.</p>
+    <form id="login-form">
+      <label for="pw">Admin password</label>
+      <input id="pw" name="password" type="password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+    </form>
+    <div id="msg"></div>
+    <p class="hint"><a href="/admin/">Back to admin</a> · <a href="/api/health">Health</a></p>
+    <script>
+      (async function () {
+        const msg = document.getElementById("msg");
+        const r = await fetch("/api/auth/me", { credentials: "include" });
+        const me = await r.json().catch(() => ({}));
+        if (!me.auth_enabled) {
+          msg.innerHTML =
+            '<div class="msg ok">Authentication is disabled. <a href="/admin/">Continue to admin</a>.</div>';
+          document.getElementById("login-form").style.display = "none";
+          return;
+        }
+        if (me.logged_in) {
+          window.location.replace("/admin/");
+          return;
+        }
+        document.getElementById("login-form").addEventListener("submit", async (ev) => {
+          ev.preventDefault();
+          msg.innerHTML = "";
+          const password = document.getElementById("pw").value;
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            msg.innerHTML =
+              '<div class="msg err">' + (typeof data.detail === "string" ? data.detail : "Sign-in failed") + "</div>";
+            return;
+          }
+          window.location.replace("/admin/");
+        });
+      })();
+    </script>
+  </body>
+</html>
