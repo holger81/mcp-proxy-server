@@ -91,8 +91,10 @@ async def _upstream_streams(
         return
 
     async with create_mcp_http_client(headers=headers) as http_client:
-        async with streamable_http_client(server.url, http_client=http_client) as streams:
-            yield streams
+        async with streamable_http_client(server.url, http_client=http_client) as transport:
+            # mcp>=1.10 yields (read, write, get_session_id); older builds yield (read, write).
+            read_stream, write_stream = transport[0], transport[1]
+            yield read_stream, write_stream
 
 
 async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: InspectKind) -> dict:
@@ -103,7 +105,12 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
     """
     assert server.url
     url = str(server.url).strip()
-    hdrs = {"Accept": "application/json", "Content-Type": "application/json", **(server.headers or {})}
+    # Match StreamableHTTPTransport (mcp client): HA /api/mcp may return 406 if Accept is only JSON.
+    hdrs = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        **(server.headers or {}),
+    }
 
     def rpc(method: str, params: dict) -> dict:
         return {
