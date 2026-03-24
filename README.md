@@ -58,6 +58,14 @@ If your Portainer environment cannot build from Git, build the image elsewhere, 
 
 Domains are stored in **`/data/config/domains.json`** (bootstrap includes **`default`**). Manage them in **Admin → Domains** (requires admin session when auth is on). Each server has a **`domain`** field in **`servers.json`**. API: **`GET/POST /api/domains`**, **`DELETE /api/domains/{id}`** (admin session only).
 
+### Admin: logs, LLM preview, and per-server LLM notes
+
+In **Admin → Logs**, the UI loads **`GET /api/logs?limit=…`** (default 500 lines, max 2000): recent formatted lines from an in-memory ring buffer (`mcp_proxy` and Uvicorn loggers). **Admin → LLM preview** calls **`GET /api/mcp-llm-preview`** and shows the JSON snapshot of merged **`instructions`**, the three meta-tools (names, descriptions, **`inputSchema`**), and short **`extras`** notes—i.e. what MCP exposes at the session tool layer (upstream tools still appear only via search).
+
+Each server may include **`llm_context`** (persisted in **`servers.json`**, max 12k chars). That text is appended into the proxy’s MCP **`instructions`** (under per-server headings) and, when non-empty, duplicated on each row in **`searchToolsForDomain`** / **`searchTool`** results as **`serverLlmContext`**. Configure it in the admin **Register server** wizard, **Add remote MCP (HTTP)**, or **Edit server**. **`POST /api/servers/register-stdio-package`** accepts **`llm_context`** as well.
+
+These two endpoints require an **admin session** (same as **API clients** and **Domains**), not only a bearer API token.
+
 ### Authentication
 
 When a non-empty admin password is loaded (from **`MCP_PROXY_ADMIN_PASSWORD`** or **`MCP_PROXY_ADMIN_PASSWORD_FILE`**), a session secret of at least 16 characters must also be loaded (from **`MCP_PROXY_SESSION_SECRET`** or **`MCP_PROXY_SESSION_SECRET_FILE`**). On startup the process logs either **“Authentication is enabled”** or **“Authentication is disabled”** — if you expected a password but see “disabled”, the variables are not reaching the container (wrong service, typo, or secrets only mounted as files without `*_FILE`).

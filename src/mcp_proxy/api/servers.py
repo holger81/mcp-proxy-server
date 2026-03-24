@@ -52,6 +52,7 @@ class RegisterStdioPackageBody(BaseModel):
     domain: str = Field(default="default", max_length=63)
     package: str = Field(min_length=1, max_length=200)
     display_name: str | None = None
+    llm_context: str = Field(default="", max_length=12000)
     env: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("server_id")
@@ -75,6 +76,13 @@ class RegisterStdioPackageBody(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             return None
         return str(v).strip()
+
+    @field_validator("llm_context", mode="before")
+    @classmethod
+    def llm_ctx(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        return str(v)
 
     @field_validator("env", mode="before")
     @classmethod
@@ -167,6 +175,7 @@ async def register_stdio_package(request: Request, body: RegisterStdioPackageBod
         type="stdio",
         enabled=True,
         display_name=body.display_name,
+        llm_context=body.llm_context,
         command=suggested,
         cwd=None,
         env=body.env,

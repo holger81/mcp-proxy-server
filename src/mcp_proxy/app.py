@@ -11,6 +11,7 @@ from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.api.routes import router as api_router
 from mcp_proxy.client_store import ClientTokenStore
+from mcp_proxy.log_buffer import attach_ring_logging
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    attach_ring_logging()
     settings.log_auth_state()
     app = FastAPI(
         title="MCP Proxy",

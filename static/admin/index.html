@@ -180,6 +180,14 @@
         max-height: 28rem;
         overflow: auto;
       }
+      #admin-logs,
+      #admin-llm-preview {
+        margin-top: 0.75rem;
+        max-height: 36rem;
+        overflow: auto;
+        font-size: 0.8rem;
+        line-height: 1.35;
+      }
       dialog {
         border: 1px solid #3a3a4a;
         border-radius: 10px;
@@ -241,6 +249,8 @@
       <button type="button" class="tab" data-tab="explore" role="tab" aria-selected="false">Explore servers</button>
       <button type="button" class="tab" data-tab="clients" role="tab" aria-selected="false">API clients</button>
       <button type="button" class="tab" data-tab="domains" role="tab" aria-selected="false">Domains</button>
+      <button type="button" class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
+      <button type="button" class="tab" data-tab="llm" role="tab" aria-selected="false">LLM preview</button>
       <button type="button" class="secondary push-end hidden" id="btn-logout">Log out</button>
     </nav>
 
@@ -264,6 +274,8 @@
         <input id="wiz-pkg" type="text" autocomplete="off" placeholder="distribution-name or @scope/package" />
         <label for="wiz-display">Display name <span class="hint">(optional)</span></label>
         <input id="wiz-display" type="text" autocomplete="off" />
+        <label for="wiz-llm">LLM / instructions for this server <span class="hint">(optional — merged into MCP instructions and search results)</span></label>
+        <textarea id="wiz-llm" rows="5" placeholder="e.g. Prefer entity_id over friendly_name; HA is at http://…"></textarea>
         <label for="wiz-env">Environment <span class="hint">(JSON — API keys, etc.)</span></label>
         <textarea id="wiz-env" placeholder="{}">{}</textarea>
         <button type="button" id="wiz-go">Install and register</button>
@@ -301,6 +313,9 @@
           <label for="f-headers">Headers (JSON object, optional)</label>
           <textarea id="f-headers" placeholder='{"Authorization": "Bearer …"}'></textarea>
         </fieldset>
+
+        <label for="f-llm">LLM / instructions for this server <span class="hint">(optional)</span></label>
+        <textarea id="f-llm" rows="4" placeholder="Notes shown to the LLM for tools from this upstream"></textarea>
 
         <button type="submit">Add HTTP server</button>
       </form>
@@ -391,6 +406,31 @@
       <p id="domains-empty" class="hint">No domains loaded.</p>
     </section>
 
+    <section id="panel-logs" class="hidden" role="tabpanel">
+      <h2>Application logs</h2>
+      <p class="hint">
+        Recent lines from the proxy process (in-memory buffer, last ~1000 lines). Useful for debugging upstream and MCP
+        traffic.
+      </p>
+      <button type="button" class="secondary small" id="logs-refresh" style="margin-top: 0.5rem">Refresh</button>
+      <label for="logs-limit" class="hint" style="display: inline-block; margin-left: 0.75rem">Lines</label>
+      <input id="logs-limit" type="number" min="1" max="2000" value="500" style="width: 5rem; display: inline-block; margin-left: 0.35rem" />
+      <pre id="admin-logs" class="hidden"></pre>
+      <p id="logs-empty" class="hint">Loading…</p>
+    </section>
+
+    <section id="panel-llm" class="hidden" role="tabpanel">
+      <h2>What the LLM sees (MCP surface)</h2>
+      <p class="hint">
+        Snapshot of <code>server.instructions</code>, the three meta-tools (<code>searchToolsForDomain</code>,
+        <code>searchTool</code>, <code>callTool</code>) with names, descriptions, and <code>inputSchema</code>. Upstream
+        tools appear only after search; each row can include <code>serverLlmContext</code> when set per server below.
+      </p>
+      <button type="button" class="secondary small" id="llm-refresh" style="margin-top: 0.5rem">Refresh</button>
+      <pre id="admin-llm-preview" class="hidden"></pre>
+      <p id="llm-empty" class="hint">Open this tab to load the preview.</p>
+    </section>
+
     <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
       <div class="dialog-inner">
         <h2 id="edit-dialog-title">Edit server</h2>
@@ -432,6 +472,9 @@
             <textarea id="e-env"></textarea>
           </fieldset>
 
+          <label for="e-llm">LLM / instructions for this server <span class="hint">(optional)</span></label>
+          <textarea id="e-llm" rows="4"></textarea>
+
           <div id="edit-msg"></div>
           <div class="dialog-actions">
             <button type="button" class="secondary" id="edit-cancel">Cancel</button>
@@ -470,6 +513,8 @@
         const api = "/api/servers";
         const apiClients = "/api/clients";
         const apiDomains = "/api/domains";
+        const apiLogs = "/api/logs";
+        const apiLlmPreview = "/api/mcp-llm-preview";
 
         let cachedDomains = [];
 
@@ -520,6 +565,8 @@
         const panelExp = document.getElementById("panel-explore");
         const panelClients = document.getElementById("panel-clients");
         const panelDomains = document.getElementById("panel-domains");
+        const panelLogs = document.getElementById("panel-logs");
+        const panelLlm = document.getElementById("panel-llm");
         const clientsBody = document.getElementById("clients-body");
         const clientsTable = document.getElementById("clients-table");
         const clientsEmpty = document.getElementById("clients-empty");
@@ -591,6 +638,7 @@
           document.getElementById("e-cmd").value = commandToString(s.command);
           document.getElementById("e-cwd").value = s.cwd || "";
           document.getElementById("e-env").value = JSON.stringify(s.env && Object.keys(s.env).length ? s.env : {}, null, 2);
+          document.getElementById("e-llm").value = s.llm_context || "";
           editDialog.showModal();
         }
 
@@ -618,12 +666,32 @@
               const url = document.getElementById("e-url").value.trim();
               const headers = parseJsonObject(document.getElementById("e-headers").value, "Headers");
               const http_transport = editForm.querySelector('input[name="e-http_transport"]:checked').value;
-              body = { id, domain, type: "http", enabled, display_name, url, headers, http_transport };
+              body = {
+                id,
+                domain,
+                type: "http",
+                enabled,
+                display_name,
+                url,
+                headers,
+                http_transport,
+                llm_context: document.getElementById("e-llm").value,
+              };
             } else {
               const cmd = document.getElementById("e-cmd").value.trim();
               const cwd = document.getElementById("e-cwd").value.trim() || null;
               const env = parseJsonObject(document.getElementById("e-env").value, "Environment");
-              body = { id, domain, type: "stdio", enabled, display_name, command: cmd, cwd, env };
+              body = {
+                id,
+                domain,
+                type: "stdio",
+                enabled,
+                display_name,
+                command: cmd,
+                cwd,
+                env,
+                llm_context: document.getElementById("e-llm").value,
+              };
             }
           } catch (e) {
             editMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
@@ -905,6 +973,50 @@
           loadDomainsList().then(() => loadDomainsPanel());
         });
 
+        const adminLogsPre = document.getElementById("admin-logs");
+        const logsEmpty = document.getElementById("logs-empty");
+        const adminLlmPre = document.getElementById("admin-llm-preview");
+        const llmEmpty = document.getElementById("llm-empty");
+
+        async function loadLogs() {
+          logsEmpty.classList.remove("hidden");
+          logsEmpty.textContent = "Loading…";
+          adminLogsPre.classList.add("hidden");
+          let lim = parseInt(document.getElementById("logs-limit").value, 10);
+          if (!Number.isFinite(lim) || lim < 1) lim = 500;
+          if (lim > 2000) lim = 2000;
+          const res = await apiFetch(apiLogs + "?limit=" + encodeURIComponent(String(lim)));
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            logsEmpty.textContent =
+              typeof data.detail === "string" ? data.detail : "Failed to load logs (" + res.status + ").";
+            return;
+          }
+          const lines = data.lines || [];
+          logsEmpty.classList.add("hidden");
+          adminLogsPre.classList.remove("hidden");
+          adminLogsPre.textContent = lines.length ? lines.join("\n") : "(no log lines yet)";
+        }
+
+        async function loadLlmPreview() {
+          llmEmpty.classList.remove("hidden");
+          llmEmpty.textContent = "Loading…";
+          adminLlmPre.classList.add("hidden");
+          const res = await apiFetch(apiLlmPreview);
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            llmEmpty.textContent =
+              typeof data.detail === "string" ? data.detail : "Failed to load preview (" + res.status + ").";
+            return;
+          }
+          llmEmpty.classList.add("hidden");
+          adminLlmPre.classList.remove("hidden");
+          adminLlmPre.textContent = JSON.stringify(data, null, 2);
+        }
+
+        document.getElementById("logs-refresh").addEventListener("click", () => loadLogs());
+        document.getElementById("llm-refresh").addEventListener("click", () => loadLlmPreview());
+
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
             const tab = btn.getAttribute("data-tab");
@@ -917,9 +1029,13 @@
             panelExp.classList.toggle("hidden", tab !== "explore");
             panelClients.classList.toggle("hidden", tab !== "clients");
             panelDomains.classList.toggle("hidden", tab !== "domains");
+            panelLogs.classList.toggle("hidden", tab !== "logs");
+            panelLlm.classList.toggle("hidden", tab !== "llm");
             if (tab === "explore") loadServers();
             if (tab === "clients") loadClients();
             if (tab === "domains") loadDomainsPanel();
+            if (tab === "logs") loadLogs();
+            if (tab === "llm") loadLlmPreview();
           });
         });
 
@@ -955,6 +1071,7 @@
                 domain: document.getElementById("wiz-domain").value.trim() || "default",
                 package: pkgSpec,
                 display_name,
+                llm_context: document.getElementById("wiz-llm").value.trim(),
                 env,
               }),
             });
@@ -1009,6 +1126,7 @@
               url,
               headers,
               http_transport,
+              llm_context: document.getElementById("f-llm").value.trim(),
             };
           } catch (e) {
             formMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";

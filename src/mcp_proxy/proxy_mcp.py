@@ -59,17 +59,19 @@ async def _list_upstream_tools(server: UpstreamServer) -> list[mcp_types.Tool]:
 
 def _tool_defs_for_server(server: UpstreamServer, tools: list[mcp_types.Tool]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    note = (server.llm_context or "").strip()
     for t in tools:
         composite = f"{server.id}/{t.name}"
-        out.append(
-            {
-                "toolName": composite,
-                "description": (t.description or "").strip(),
-                "domain": server.domain,
-                "serverId": server.id,
-                "inputSchema": t.inputSchema,
-            }
-        )
+        row: dict[str, Any] = {
+            "toolName": composite,
+            "description": (t.description or "").strip(),
+            "domain": server.domain,
+            "serverId": server.id,
+            "inputSchema": t.inputSchema,
+        }
+        if note:
+            row["serverLlmContext"] = note
+        out.append(row)
     return out
 
 
@@ -96,7 +98,7 @@ def _domain_enum_schema(domain_ids: list[str], description: str) -> dict[str, An
     return {"type": "string", "enum": domain_ids, "description": description}
 
 
-def _instructions() -> str:
+def _base_instructions() -> str:
     return (
         "You are connected through an MCP proxy. Individual upstream tools are NOT listed at the top level. "
         "As an LLM, you must use exactly the three tools below in sequence when you need a capability "
@@ -106,8 +108,9 @@ def _instructions() -> str:
         "tools/list). Domains group upstream servers (configured in the proxy admin UI).\n"
         "2) Discover tools: call searchToolsForDomain(domain) to list all tools in that domain, OR "
         "searchTool(query, domain optional) to find tools by keyword in name/description.\n"
-        "3) Read the JSON response: each entry includes toolName, description, domain, serverId, and "
-        "inputSchema. Use inputSchema to know required and optional parameters.\n"
+        "3) Read the JSON response: each entry includes toolName, description, domain, serverId, inputSchema, "
+        "and optionally serverLlmContext (admin notes for that upstream). "
+        "Use inputSchema to know required and optional parameters.\n"
         "4) Execute: call callTool with toolName exactly as returned (format `<server-id>/<upstream-tool-name>`) "
         "and arguments as a JSON object matching that schema.\n\n"
         "Do not invent tool names. Always obtain toolName from searchToolsForDomain or searchTool first. "
@@ -116,11 +119,133 @@ def _instructions() -> str:
     )
 
 
+def full_instructions_for_store(store: ServerConfigStore) -> str:
+    parts = [_base_instructions(), "", "## Upstream server notes (admin → LLM context)", ""]
+    any_note = False
+    for s in sorted(store.list_servers(), key=lambda x: x.id):
+        note = (s.llm_context or "").strip()
+        if not note:
+            continue
+        any_note = True
+        title = f"{s.id} ({s.display_name})" if s.display_name else s.id
+        parts.append(f"### {title}")
+        parts.append(note)
+        parts.append("")
+    if not any_note:
+        parts.append(
+            "_No per-server notes yet. Configure \"LLM / instructions\" for each server in the admin UI._"
+        )
+        parts.append("")
+    return "\n".join(parts)
+
+
+def build_meta_tool_list(domain_ids: list[str]) -> list[mcp_types.Tool]:
+    dom = _domain_enum_schema(
+        domain_ids,
+        "Domain id (unique). Choose one; configure domains in the proxy admin UI.",
+    )
+    dom_opt = _domain_enum_schema(
+        domain_ids,
+        "Optional: restrict search to this domain id.",
+    )
+    return [
+        mcp_types.Tool(
+            name="searchToolsForDomain",
+            description=(
+                "For LLMs: first discovery step when you know the domain. "
+                "Returns JSON listing toolName, description, inputSchema per upstream tool in that domain. "
+                "Domains group MCP servers (e.g. smart home vs network). "
+                "Use the enum for `domain`; then use callTool with a toolName from this list."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"domain": dom},
+                "required": ["domain"],
+            },
+        ),
+        mcp_types.Tool(
+            name="searchTool",
+            description=(
+                "For LLMs: discovery when you have a keyword (e.g. 'light', 'wifi') but not the exact tool. "
+                "Returns JSON matches with toolName, domain, serverId, inputSchema, and optional serverLlmContext. "
+                "Optional `domain` limits search to one domain. "
+                "After picking a tool, call callTool with that toolName and arguments from inputSchema."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Substring to match (case-insensitive).",
+                    },
+                    "domain": dom_opt,
+                },
+                "required": ["query"],
+            },
+        ),
+        mcp_types.Tool(
+            name="callTool",
+            description=(
+                "For LLMs: execution step only. "
+                "Pass toolName exactly as returned by searchToolsForDomain or searchTool "
+                "(`<server-id>/<upstream-tool-name>`). "
+                "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "toolName": {
+                        "type": "string",
+                        "description": "Format: `<server-id>/<upstream-tool-name>`.",
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "JSON object of parameters for the upstream tool.",
+                        "additionalProperties": True,
+                    },
+                },
+                "required": ["toolName"],
+            },
+        ),
+    ]
+
+
+def get_llm_preview_snapshot(
+    store: ServerConfigStore,
+    domain_store: DomainStore,
+) -> dict[str, Any]:
+    """Serializable view of what MCP clients receive for tools + instructions (admin preview)."""
+    ids = sorted({d.id for d in domain_store.list_records()})
+    if not ids:
+        ids = ["default"]
+    tools = build_meta_tool_list(ids)
+    tool_dicts = [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools]
+    return {
+        "server": {
+            "name": "mcp-proxy",
+            "version": "0.1.0",
+            "role": "Aggregates upstream MCP servers; only the three meta-tools are listed at session level.",
+        },
+        "instructions": full_instructions_for_store(store),
+        "tools": tool_dicts,
+        "extras": {
+            "upstream_tools": (
+                "Hidden until searchToolsForDomain / searchTool; JSON entries may include serverLlmContext "
+                "when configured per server."
+            ),
+            "protocol": (
+                "Full initialize/capabilities exchange is handled by the MCP SDK; "
+                "this preview focuses on instructions + listed tools."
+            ),
+        },
+    }
+
+
 def build_proxy_mcp_server(store: ServerConfigStore, domain_store: DomainStore) -> Server:
     server = Server(
         "mcp-proxy",
         version="0.1.0",
-        instructions=_instructions(),
+        instructions=full_instructions_for_store(store),
     )
 
     def _domain_ids() -> list[str]:
@@ -129,75 +254,8 @@ def build_proxy_mcp_server(store: ServerConfigStore, domain_store: DomainStore) 
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        ids = _domain_ids()
-        dom = _domain_enum_schema(
-            ids,
-            "Domain id (unique). Choose one; configure domains in the proxy admin UI.",
-        )
-        dom_opt = _domain_enum_schema(
-            ids,
-            "Optional: restrict search to this domain id.",
-        )
-        return [
-            mcp_types.Tool(
-                name="searchToolsForDomain",
-                description=(
-                    "For LLMs: first discovery step when you know the domain. "
-                    "Returns JSON listing toolName, description, inputSchema per upstream tool in that domain. "
-                    "Domains group MCP servers (e.g. smart home vs network). "
-                    "Use the enum for `domain`; then use callTool with a toolName from this list."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {"domain": dom},
-                    "required": ["domain"],
-                },
-            ),
-            mcp_types.Tool(
-                name="searchTool",
-                description=(
-                    "For LLMs: discovery when you have a keyword (e.g. 'light', 'wifi') but not the exact tool. "
-                    "Returns JSON matches with toolName, domain, serverId, inputSchema. "
-                    "Optional `domain` limits search to one domain. "
-                    "After picking a tool, call callTool with that toolName and arguments from inputSchema."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Substring to match (case-insensitive).",
-                        },
-                        "domain": dom_opt,
-                    },
-                    "required": ["query"],
-                },
-            ),
-            mcp_types.Tool(
-                name="callTool",
-                description=(
-                    "For LLMs: execution step only. "
-                    "Pass toolName exactly as returned by searchToolsForDomain or searchTool "
-                    "(`<server-id>/<upstream-tool-name>`). "
-                    "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "toolName": {
-                            "type": "string",
-                            "description": "Format: `<server-id>/<upstream-tool-name>`.",
-                        },
-                        "arguments": {
-                            "type": "object",
-                            "description": "JSON object of parameters for the upstream tool.",
-                            "additionalProperties": True,
-                        },
-                    },
-                    "required": ["toolName"],
-                },
-            ),
-        ]
+        server.instructions = full_instructions_for_store(store)
+        return build_meta_tool_list(_domain_ids())
 
     @server.call_tool()
     async def call_tool(

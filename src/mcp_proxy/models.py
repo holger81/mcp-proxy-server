@@ -42,6 +42,11 @@ class UpstreamServer(BaseModel):
     enabled: bool = True
     type: Literal["stdio", "http"]
     display_name: str | None = Field(default=None, description="Optional label in admin UI")
+    llm_context: str = Field(
+        default="",
+        max_length=12000,
+        description="Optional text appended to MCP server instructions and to search results for this upstream.",
+    )
 
     url: str | None = Field(
         default=None,
@@ -78,6 +83,13 @@ class UpstreamServer(BaseModel):
     @classmethod
     def domain_slug(cls, v: str) -> str:
         return validate_slug_id(v)
+
+    @field_validator("llm_context", mode="before")
+    @classmethod
+    def strip_llm_context(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        return str(v) if isinstance(v, str) else str(v)
 
     @field_validator("command", mode="before")
     @classmethod
