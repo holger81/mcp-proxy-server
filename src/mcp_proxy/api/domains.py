@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from mcp_proxy.domain_store import DomainRecord, DomainStore
 from mcp_proxy.models import validate_slug_id
