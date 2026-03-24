@@ -88,7 +88,7 @@ def require_docs_access(request: Request) -> bool:
 
 
 class AuthEnforcementMiddleware(BaseHTTPMiddleware):
-    """Protect /admin (except login), /docs, and /openapi.json when auth is enabled."""
+    """Protect /mcp, /admin (except login), /docs, and /openapi.json when auth is enabled."""
 
     def __init__(self, app, settings: Settings) -> None:
         super().__init__(app)
@@ -99,6 +99,19 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
+
+        # Remote MCP clients use Bearer tokens; browsers would get JSON 401 unless Accept prefers HTML.
+        if path.rstrip("/") == "/mcp":
+            if request.session.get(SESSION_ADMIN_KEY):
+                return await call_next(request)
+            token = bearer_token(request)
+            if token:
+                store: ClientTokenStore = request.app.state.client_store
+                if store.verify_bearer(token):
+                    return await call_next(request)
+            if _should_redirect_browser_to_login(request):
+                return RedirectResponse(url="/admin/login.html", status_code=302)
+            return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         if path.startswith("/admin"):
             if path.rstrip("/") == "/admin/login.html" or path.endswith("/login.html"):

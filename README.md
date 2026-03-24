@@ -1,8 +1,8 @@
 # mcp-proxy-server
 
-FastAPI app that will aggregate MCP upstreams. Scaffold includes:
+FastAPI app that aggregates registered MCP upstreams:
 
-- `GET/POST /mcp` — placeholders (Streamable HTTP to be implemented)
+- `GET/POST /mcp` — **Streamable HTTP** MCP endpoint (aggregated tools as `<server-id>/<tool-name>`). When auth is enabled, send `Authorization: Bearer <api-client-token>` (same as `/api/*`).
 - `GET /api/health` — liveness
 - `GET /admin/` — static admin shell
 
@@ -77,6 +77,7 @@ When authentication is enabled:
 
 - **`GET /api/health`** and **`/api/auth/*`** stay public.
 - **Admin UI** (`/admin/`, except **`/admin/login.html`**) requires signing in with the admin password (session cookie).
+- **`/mcp`** (Streamable HTTP for Cursor and other MCP clients) uses the same rule: admin session cookie **or** **`Authorization: Bearer <api-client-token>`**.
 - **API** (`/api/servers`, catalog, inspect, install, etc.) accepts either that session **or** **`Authorization: Bearer <token>`** from an API client created in the admin **API clients** tab.
 - **Client management** (`GET/POST/DELETE /api/clients`) is only available with an **admin session** (not with a client bearer token).
 - OpenAPI **`/docs`** and **`/openapi.json`** require an admin session when auth is on.

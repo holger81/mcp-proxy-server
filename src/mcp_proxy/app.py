@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -5,19 +7,48 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.api.routes import router as api_router
 from mcp_proxy.client_store import ClientTokenStore
 from mcp_proxy.config_store import ServerConfigStore
+from mcp_proxy.proxy_mcp import build_proxy_mcp_server
 from mcp_proxy.security import AuthEnforcementMiddleware
 from mcp_proxy.settings import Settings
+
+try:
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+except ImportError:  # pragma: no cover
+    StreamableHTTPSessionManager = None  # type: ignore[misc, assignment]
+
+
+class _McpStreamableMount:
+    """ASGI app mounted at `/mcp` delegating to StreamableHTTPSessionManager."""
+
+    def __init__(self, session_manager: StreamableHTTPSessionManager) -> None:
+        self._session_manager = session_manager
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            while True:
+                message = await receive()
+                if message["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif message["type"] == "lifespan.shutdown":
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+            return
+        if scope["type"] != "http":
+            return
+        await self._session_manager.handle_request(scope, receive, send)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
     (settings.data_dir / "config").mkdir(parents=True, exist_ok=True)
-    yield
+    async with app.state.mcp_session_manager.run():
+        yield
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,6 +63,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.server_store = ServerConfigStore(settings.data_dir)
     app.state.client_store = ClientTokenStore(settings.data_dir)
+
+    if StreamableHTTPSessionManager is None:
+        raise RuntimeError("mcp package is missing StreamableHTTPSessionManager; upgrade modelcontextprotocol")
+    mcp_sdk_server = build_proxy_mcp_server(app.state.server_store)
+    app.state.mcp_session_manager = StreamableHTTPSessionManager(
+        mcp_sdk_server,
+        stateless=False,
+    )
 
     session_key = (
         settings.session_secret.strip()
@@ -50,24 +89,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(api_router, prefix="/api")
 
+    app.mount("/mcp", _McpStreamableMount(app.state.mcp_session_manager))
+
     @app.get("/")
     async def root() -> RedirectResponse:
         """Bare host:port hits `/`; send users to the admin UI."""
         return RedirectResponse(url="/admin/", status_code=307)
-
-    @app.get("/mcp")
-    async def mcp_get() -> JSONResponse:
-        return JSONResponse(
-            status_code=405,
-            content={"detail": "GET /mcp (SSE) not implemented yet; use POST for JSON-RPC."},
-        )
-
-    @app.post("/mcp")
-    async def mcp_post() -> JSONResponse:
-        return JSONResponse(
-            status_code=501,
-            content={"detail": "MCP proxy handler not wired yet."},
-        )
 
     admin_dir = Path(settings.static_root).resolve() / "admin"
     if admin_dir.is_dir():
