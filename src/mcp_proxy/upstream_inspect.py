@@ -24,6 +24,23 @@ class _SimplePostUnsupported(Exception):
     """One-shot JSON-RPC POST is not viable for this host; use the full streamable MCP client."""
 
 
+def _is_method_not_found_text(msg: str) -> bool:
+    m = (msg or "").lower()
+    return "method not found" in m or m.strip() == "-32601"
+
+
+def _is_method_not_found_exc(exc: BaseException) -> bool:
+    return _is_method_not_found_text(upstream_error_detail(exc))
+
+
+def _empty_resources_payload() -> dict:
+    return {"kind": "resources", "resources": []}
+
+
+def _empty_prompts_payload() -> dict:
+    return {"kind": "prompts", "prompts": []}
+
+
 def _is_wrapper_message(text: str) -> bool:
     t = text.lower()
     return (
@@ -143,7 +160,10 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
         if data.get("error") is not None:
             err = data["error"]
             if isinstance(err, dict):
+                code = err.get("code")
                 msg = err.get("message", str(err))
+                if code == -32601:
+                    raise _SimplePostUnsupported("Method not found")
             else:
                 msg = str(err)
             raise _SimplePostUnsupported(msg)
@@ -180,7 +200,12 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
                 "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in ltr.tools],
             }
         if kind == "resources":
-            res = await post_json(client, rpc("resources/list", {}))
+            try:
+                res = await post_json(client, rpc("resources/list", {}))
+            except _SimplePostUnsupported as e:
+                if _is_method_not_found_text(str(e)):
+                    return _empty_resources_payload()
+                raise
             if res is None:
                 raise _SimplePostUnsupported("resources/list returned an empty response")
             lr = mcp_types.ListResourcesResult.model_validate(res)
@@ -191,7 +216,12 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
                 ],
             }
         if kind == "prompts":
-            res = await post_json(client, rpc("prompts/list", {}))
+            try:
+                res = await post_json(client, rpc("prompts/list", {}))
+            except _SimplePostUnsupported as e:
+                if _is_method_not_found_text(str(e)):
+                    return _empty_prompts_payload()
+                raise
             if res is None:
                 raise _SimplePostUnsupported("prompts/list returned an empty response")
             lp = mcp_types.ListPromptsResult.model_validate(res)
@@ -232,7 +262,12 @@ async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
                         "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in result.tools],
                     }
                 if kind == "resources":
-                    result = await session.list_resources()
+                    try:
+                        result = await session.list_resources()
+                    except Exception as e:
+                        if _is_method_not_found_exc(e):
+                            return _empty_resources_payload()
+                        raise
                     return {
                         "kind": kind,
                         "resources": [
@@ -240,7 +275,12 @@ async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
                         ],
                     }
                 if kind == "prompts":
-                    result = await session.list_prompts()
+                    try:
+                        result = await session.list_prompts()
+                    except Exception as e:
+                        if _is_method_not_found_exc(e):
+                            return _empty_prompts_payload()
+                        raise
                     return {
                         "kind": kind,
                         "prompts": [
