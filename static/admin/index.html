@@ -208,10 +208,25 @@
       .dialog-actions button {
         margin-top: 0;
       }
+      .banner-warn {
+        margin: 1rem 0 0;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        background: #3a3020;
+        border: 1px solid #6b5a3a;
+        color: #f0e8d8;
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      .banner-warn code {
+        background: #2a2518;
+        padding: 0.1rem 0.35rem;
+      }
     </style>
   </head>
   <body>
     <h1>MCP Proxy</h1>
+    <div id="auth-off-banner" class="hidden banner-warn" role="status"></div>
     <p>
       Config: <code>/data/config/servers.json</code>. Stdio MCP servers are installed via PyPI or npm below (under
       <code>/data/venvs</code> or <code>/data/npm</code>). Remote servers use the HTTP form. Inspect runs a short MCP
@@ -399,6 +414,16 @@
         if (_me.auth_enabled && !_me.logged_in) {
           window.location.replace("/admin/login.html");
           return;
+        }
+
+        if (!_me.auth_enabled) {
+          const ban = document.getElementById("auth-off-banner");
+          ban.classList.remove("hidden");
+          ban.innerHTML =
+            "<strong>No admin password is set.</strong> Anyone who can reach this service can use the admin UI and API. " +
+            "To require a password, set environment variables <code>MCP_PROXY_ADMIN_PASSWORD</code> and " +
+            "<code>MCP_PROXY_SESSION_SECRET</code> (at least 16 random characters), then restart the container. " +
+            'After that, open <a href="/admin/login.html">Sign in</a>.';
         }
 
         const api = "/api/servers";

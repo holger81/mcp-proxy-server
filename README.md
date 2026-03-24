@@ -25,6 +25,8 @@ docker compose up -d --build
 
 Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
 
+By default **no admin password** is configured: the admin UI does not ask for a password until you set **`MCP_PROXY_ADMIN_PASSWORD`** and **`MCP_PROXY_SESSION_SECRET`** (see [Authentication](#authentication) below).
+
 On **Admin**, **Install stdio MCP** runs **`pip`** (PyPI) or **`npm install`** (npm) inside the container, detects a CLI binary, and **`POST /api/servers/register-stdio-package`** creates or updates the stdio entry in **`/data/config/servers.json`** (install roots: **`/data/venvs/<id>`**, **`/data/npm/<id>`**). **Add remote MCP (HTTP)** adds streamable or legacy SSE upstreams. Optional catalog overlays: mount **`/data/config/catalog_presets.json`** and use **`GET /api/catalog/presets`** (builtin list is empty; **`{DATA_DIR}`** in preset **`command`** / **`cwd`** expands to **`MCP_PROXY_DATA_DIR`**). API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`**, **`DELETE /api/servers/{id}`**, **`POST /api/servers/register-stdio-package`**, **`GET /api/servers/{id}/inspect?kind=…`**. HTTP transport: **`streamable-http`** (default) or **`sse`**.
 
 ## Use with Portainer
