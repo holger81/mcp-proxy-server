@@ -1,107 +1,385 @@
 # mcp-proxy-server
 
-FastAPI app that aggregates registered MCP upstreams:
+<p align="center">
+  <b>One MCP endpoint for all your tools.</b><br/>
+  <i>LLM-friendly tool discovery, routing, and control.</i>
+</p>
 
-- `GET/POST /mcp` — **Streamable HTTP** MCP endpoint. Clients only see three tools: **`searchToolsForDomain`**, **`searchTool`**, and **`callTool`**. Upstream tools are listed or invoked via those (composite name `<server-id>/<tool-name>`). Domains group servers; each server has a **domain** id configured in the admin UI. When auth is enabled, send `Authorization: Bearer <api-client-token>` (same as `/api/*`).
-- `GET /api/health` — liveness
-- `GET /admin/` — static admin shell
+<p align="center">
+  <img src="https://img.shields.io/badge/MCP-compatible-blue" />
+  <img src="https://img.shields.io/badge/FastAPI-powered-green" />
+  <img src="https://img.shields.io/badge/Docker-ready-black" />
+</p>
 
-## Run with Docker
+---
+## ✨ What is this?
 
-The image starts as **root** only to `mkdir` **`/data/config`** and **`chown`** the **`/data`** volume to **`appuser` (uid 1000)**, then runs Uvicorn as that user. This avoids `PermissionError` on empty named volumes (e.g. Portainer).
+`mcp-proxy-server` is an **LLM-first MCP gateway** that sits in front of your MCP servers and exposes them through a **single, clean, model-friendly interface**.
+
+Instead of overwhelming your LLM with dozens (or hundreds) of tools, it provides just **three meta-tools**:
+
+- `searchToolsForDomain`
+- `searchTool`
+- `callTool`
+
+This enables a much more reliable pattern:
+
+> 🔍 **Search → Select → Call**
+
+---
+## 🚀 Why this matters
+
+When you expose raw MCP tools directly:
+
+- ❌ Tool lists become huge and noisy  
+- ❌ Models pick the wrong tools  
+- ❌ Prompts get bloated  
+- ❌ Overlapping tools confuse agents  
+
+With `mcp-proxy-server`:
+
+- ✅ **Minimal tool surface (3 tools only)**
+- ✅ **Better tool selection by LLMs**
+- ✅ **Domain-based filtering**
+- ✅ **LLM guidance via context**
+- ✅ **One endpoint instead of many**
+
+---
+## 🧠 Core idea
+
+Instead of this:
+
+```
+LLM → 50+ tools (flat list)
+```
+
+You get:
+
+```
+LLM → 3 meta-tools → proxy → correct upstream tool
+```
+
+The proxy becomes the **intelligence layer between your LLM and your tools**.
+
+---
+## 🏗️ Architecture
+
+```
+                ┌─────────────────────┐
+                │     LLM Client      │
+                │ (Cursor / Agent)    │
+                └─────────┬───────────┘
+                          │
+                          ▼
+                ┌─────────────────────┐
+                │   MCP Proxy Server  │
+                │  (this project)     │
+                │                     │
+                │ search / route /    │
+                │ enrich context      │
+                └───────┬─────────────┘
+                        │
+        ┌───────────────┼────────────────┐
+        ▼               ▼                ▼
+ ┌────────────┐ ┌────────────┐ ┌────────────┐
+ │ MCP Server │ │ MCP Server │ │ MCP Server │
+ │  (stdio)   │ │  (remote)  │ │  (SSE)     │
+ └────────────┘ └────────────┘ └────────────┘
+```
+
+---
+## 🔑 Key Features
+
+### 🧩 1. LLM-friendly tool interface
+
+Only 3 tools are exposed:
+
+- `searchToolsForDomain` → narrow search space
+- `searchTool` → global tool discovery
+- `callTool` → execute `<server-id>/<tool-name>`
+
+---
+### 🗂️ 2. Domain-based tool grouping
+
+Organize tools into domains like:
+
+- `home-automation`
+- `dev-tools`
+- `finance`
+- `ai-services`
+
+This helps the LLM **reason about intent before searching**.
+
+---
+### 🧠 3. Per-server LLM context (`llm_context`)
+
+Each upstream server can include guidance like:
+
+```json
+"This server is best used for smart home control. Prefer it for device actions."
+```
+
+This gets:
+
+- injected into MCP instructions
+- returned with tool search results
+
+👉 This is **huge** for improving model behavior without touching tools.
+
+---
+### 🖥️ 4. Admin UI
+
+Built-in UI at `/admin`:
+
+- Add MCP servers (stdio / HTTP / SSE)
+- Assign domains
+- Add LLM context
+- Create API tokens
+- Inspect tool exposure
+- Preview what the LLM sees
+- View logs
+
+---
+### 🔌 5. Supports all MCP server types
+
+- ✅ Local (stdio) — PyPI / npm
+- ✅ Remote (HTTP / streamable)
+- ✅ Legacy SSE
+
+---
+### 🔐 6. Optional authentication
+
+- Admin UI login
+- API client tokens
+- Bearer auth for `/mcp`
+
+---
+## ⚡ Quick Start
+
+### 🐳 Docker
 
 ```bash
 docker build -t mcp-proxy .
 docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 ```
 
-If you force **`docker run --user`** and the volume is not writable by that uid, startup may still fail—use the default entrypoint or pre-chown **`/data`** on the host.
-
-Or with Compose:
+---
+### 🧱 Docker Compose
 
 ```bash
 docker compose up -d --build
 ```
 
-Open http://localhost:2222/admin/ and http://localhost:2222/api/health .
+---
+### 🌐 Open
 
-By default **no admin password** is configured: the admin UI does not ask for a password until you set **`MCP_PROXY_ADMIN_PASSWORD`** and **`MCP_PROXY_SESSION_SECRET`** (see [Authentication](#authentication) below).
+- Admin UI: http://localhost:2222/admin/
+- Health: http://localhost:2222/api/health
 
-On **Admin**, **Install stdio MCP** runs **`pip`** (PyPI) or **`npm install`** (npm) inside the container, detects a CLI binary, and **`POST /api/servers/register-stdio-package`** creates or updates the stdio entry in **`/data/config/servers.json`** (install roots: **`/data/venvs/<id>`**, **`/data/npm/<id>`**). **Add remote MCP (HTTP)** adds streamable or legacy SSE upstreams. Optional catalog overlays: mount **`/data/config/catalog_presets.json`** and use **`GET /api/catalog/presets`** (builtin list is empty; **`{DATA_DIR}`** in preset **`command`** / **`cwd`** expands to **`MCP_PROXY_DATA_DIR`**). API: **`GET/POST /api/servers`**, **`PUT /api/servers/{id}`**, **`DELETE /api/servers/{id}`**, **`POST /api/servers/register-stdio-package`**, **`GET /api/servers/{id}/inspect?kind=…`**. HTTP transport: **`streamable-http`** (default) or **`sse`**.
+---
+## 🧭 Setup Flow
 
-## Use with Portainer
+1. Start the proxy
+2. Open `/admin`
+3. Add MCP servers
+4. Assign domains
+5. Add `llm_context` (optional but recommended)
+6. Create API token
+7. Point your LLM client to:
 
-Variables you type under **Environment** in a Portainer stack are **not** visible inside the container unless **`docker-compose.yml` maps them** into `services.*.environment` (this repo’s Compose file uses `${MCP_PROXY_ADMIN_PASSWORD:-}` etc.). After changing the stack file from Git, **redeploy** the stack so the container is recreated.
-
-1. Commit and push this repo to Git (e.g. GitHub).
-2. In **Portainer** → **Stacks** → **Add stack** → **Repository** (or **Web editor**):
-   - Point **Repository URL** at your repo and set the **Compose path** to `docker-compose.yml`, **or** paste the contents of `docker-compose.yml`.
-3. **Deploy / update via build**, not a registry pull: **`mcp-proxy:latest`** is only a **local** tag after `docker compose build`. The stack sets **`pull_policy: never`** so Compose should not try to pull it from Docker Hub. In Portainer, avoid relying on **“Pull”** alone for this service—use **redeploy with rebuild** (or equivalent) so the image is built from the Dockerfile. The app is on host port **2222** (container **8080**). Data persists in the **`mcp-proxy-data`** volume.
-
-If your Portainer environment cannot build from Git, build the image elsewhere, push to a registry, and replace `build: .` in the stack with `image: your-registry/mcp-proxy:tag` (and remove or change **`pull_policy`** as needed).
-
-## Configuration (environment)
-
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `MCP_PROXY_HOST` | `0.0.0.0` | Bind address |
-| `MCP_PROXY_PORT` | `8080` | Port |
-| `MCP_PROXY_DATA_DIR` | `/data` | Config, **`venvs/`** (PyPI), **`npm/`** (npm) |
-| `MCP_PROXY_ALLOW_PYPI_INSTALL` | `true` | Allow pip in **register-stdio-package** (`pypi`). Set `false` if the admin UI is untrusted. |
-| `MCP_PROXY_ALLOW_NPM_INSTALL` | `true` | Allow npm in **register-stdio-package** (`npm`). Requires Node in the image. |
-| `MCP_PROXY_STATIC_ROOT` | `/app/static` | Static files root (set in image) |
-| `MCP_PROXY_ADMIN_PASSWORD` | *(empty)* | If set, enables auth: admin UI login + protected API |
-| `MCP_PROXY_ADMIN_PASSWORD_FILE` | *(empty)* | If set, password is read from this file (overrides `MCP_PROXY_ADMIN_PASSWORD`). Use with Docker/Portainer **secrets**. |
-| `MCP_PROXY_SESSION_SECRET` | *(empty)* | Required when admin password is set; use a long random string (≥16 chars) |
-| `MCP_PROXY_SESSION_SECRET_FILE` | *(empty)* | If set, session secret is read from this file (overrides `MCP_PROXY_SESSION_SECRET`). |
-| `MCP_PROXY_SECURE_COOKIES` | `false` | Set `true` when serving over HTTPS so session cookies are `Secure` |
-
-Domains are stored in **`/data/config/domains.json`** (bootstrap includes **`default`**). Manage them in **Admin → Domains** (requires admin session when auth is on). Each server has a **`domain`** field in **`servers.json`**. API: **`GET/POST /api/domains`**, **`DELETE /api/domains/{id}`** (admin session only).
-
-### Admin: logs, LLM preview, and per-server LLM notes
-
-In **Admin → Logs**, the UI loads **`GET /api/logs?limit=…`** (default 500 lines, max 2000): recent formatted lines from an in-memory ring buffer (`mcp_proxy` and Uvicorn loggers). **Admin → LLM preview** calls **`GET /api/mcp-llm-preview`** and shows the JSON snapshot of merged **`instructions`**, the three meta-tools (names, descriptions, **`inputSchema`**), and short **`extras`** notes—i.e. what MCP exposes at the session tool layer (upstream tools still appear only via search).
-
-Each server may include **`llm_context`** (persisted in **`servers.json`**, max 12k chars). That text is appended into the proxy’s MCP **`instructions`** (under per-server headings) and, when non-empty, duplicated on each row in **`searchToolsForDomain`** / **`searchTool`** results as **`serverLlmContext`**. Configure it in the admin **Register server** wizard, **Add remote MCP (HTTP)**, or **Edit server**. **`POST /api/servers/register-stdio-package`** accepts **`llm_context`** as well.
-
-These two endpoints require an **admin session** (same as **API clients** and **Domains**), not only a bearer API token.
-
-### Authentication
-
-When a non-empty admin password is loaded (from **`MCP_PROXY_ADMIN_PASSWORD`** or **`MCP_PROXY_ADMIN_PASSWORD_FILE`**), a session secret of at least 16 characters must also be loaded (from **`MCP_PROXY_SESSION_SECRET`** or **`MCP_PROXY_SESSION_SECRET_FILE`**). On startup the process logs either **“Authentication is enabled”** or **“Authentication is disabled”** — if you expected a password but see “disabled”, the variables are not reaching the container (wrong service, typo, or secrets only mounted as files without `*_FILE`).
-
-**Docker Compose secrets** usually appear as files under **`/run/secrets/...`**. Point the app at them, for example:
-
-```yaml
-environment:
-  MCP_PROXY_ADMIN_PASSWORD_FILE: /run/secrets/mcp_admin_password
-  MCP_PROXY_SESSION_SECRET_FILE: /run/secrets/mcp_session_secret
-secrets:
-  mcp_admin_password:
-    file: ./secrets/admin_password.txt
-  mcp_session_secret:
-    file: ./secrets/session_secret.txt
+```
+http://localhost:2222/mcp
 ```
 
-When authentication is enabled:
+---
+## 🤖 Example: How an LLM uses this
 
-- **`GET /api/health`** and **`/api/auth/*`** stay public.
-- **Admin UI** (`/admin/`, except **`/admin/login.html`**) requires signing in with the admin password (session cookie).
-- **`/mcp`** (Streamable HTTP for Cursor and other MCP clients) uses the same rule: admin session cookie **or** **`Authorization: Bearer <api-client-token>`**.
-- **API** (`/api/servers`, catalog, inspect, install, etc.) accepts either that session **or** **`Authorization: Bearer <token>`** from an API client created in the admin **API clients** tab.
-- **Client management** (`GET/POST/DELETE /api/clients`) is only available with an **admin session** (not with a client bearer token).
-- OpenAPI **`/docs`** and **`/openapi.json`** require an admin session when auth is on.
+Instead of guessing tools blindly:
 
-Create tokens in **Admin → API clients**; each token is shown once. Revoking removes access immediately.
+1. `searchTool("turn on lights")`
+2. Receives relevant tools + context
+3. Picks best tool
+4. Calls:
 
-## Local development (optional)
+```
+callTool("home-assistant/turn_on_light", {...})
+```
 
-Requires Python 3.12+ on the host:
+---
+## 🔌 Endpoints
+
+| Endpoint | Description |
+|--------|-------------|
+| `/mcp` | MCP endpoint for clients |
+| `/admin/` | Admin UI |
+| `/api/health` | Health check |
+
+---
+## Admin logs, LLM preview, and per-server `llm_context`
+
+Admin-only endpoints and UI help you understand what the LLM sees and what’s happening in the proxy:
+
+- **`GET /api/logs?limit=...`**  
+  Returns the most recent formatted log lines from an in-memory ring buffer (used by the **Logs** tab).
+- **`GET /api/mcp-llm-preview`**  
+  Returns a JSON snapshot of the proxy’s merged **`instructions`** plus the three meta-tools (and related context).
+
+### Per-server LLM context (`llm_context`)
+
+Each upstream server can store an optional **`llm_context`** (max length ~12k chars). When configured:
+
+1. It is appended into the MCP **`instructions`** sent to clients.
+2. When non-empty, it is included in tool search results as **`serverLlmContext`** (one value per upstream tool row).
+
+Where to configure:
+- Admin UI (Register/Add/Edit server forms)
+- `POST /api/servers/register-stdio-package` body also accepts `llm_context` for stdio servers
+
+Both admin endpoints above require an **admin session**.
+
+---
+## 🔐 Authentication
+
+Enable auth by setting:
 
 ```bash
-python3.12 -m venv .venv && source .venv/bin/activate
+MCP_PROXY_ADMIN_PASSWORD=yourpassword
+MCP_PROXY_SESSION_SECRET=yoursecret
+```
+
+Then:
+
+- Admin UI requires login
+- `/mcp` requires:
+  - session cookie OR
+  - `Authorization: Bearer <token>`
+
+---
+## ⚙️ Environment Variables
+
+| Variable | Default | Description |
+|--------|--------|-------------|
+| MCP_PROXY_HOST | 0.0.0.0 | Bind address |
+| MCP_PROXY_PORT | 8080 | Port |
+| MCP_PROXY_DATA_DIR | /data | Storage |
+| MCP_PROXY_ALLOW_PYPI_INSTALL | true | Allow PyPI installs |
+| MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs |
+| MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
+| MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
+| MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
+
+---
+## 🧪 Development
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 uvicorn mcp_proxy.app:app --reload --host 0.0.0.0 --port 8080
 ```
 
-Prefer Docker if you want no local toolchain.
+---
+## 🎯 When should you use this?
+
+Use `mcp-proxy-server` if:
+
+- You have **multiple MCP servers**
+- Your tool list is getting messy
+- Your LLM struggles with tool selection
+- You want **better control over tool usage**
+- You want to add **LLM guidance without modifying tools**
+- You want **one endpoint instead of many**
+
+---
+## 🧠 Mental model
+
+Think of this as:
+
+> **“API Gateway — but for LLM tools”**
+
+---
+## 🔮 Future ideas (optional roadmap)
+
+- Tool usage analytics
+- Auto-ranking tools based on success
+- Semantic tool embeddings
+- Policy / permission layer
+- Multi-tenant routing
+
+---
+## 📜 License
+MIT
+
+---
+## 💬 Final thought
+
+LLMs don’t fail because tools are missing.  
+They fail because **too many tools look the same**.
+
+`mcp-proxy-server` fixes that.
+
+---
+## Advanced Usage / Useful Examples
+
+### 1. Typical LLM flow: Search → Call
+
+Your LLM should follow this pattern:
+
+1. Discover tools with `searchToolsForDomain` or `searchTool`
+2. Select a row and copy the returned `toolName` in the format `<server-id>/<upstream-tool-name>`.
+3. Execute with `callTool` using the `arguments` shape implied by the returned `inputSchema`
+
+Example inputs:
+
+```json
+// searchTool
+{ "query": "turn on kitchen light" }
+```
+
+Then the chosen result row determines:
+
+```json
+// callTool
+{
+  "toolName": "<server-id>/<upstream-tool-name>",
+  "arguments": { "...": "..." }
+}
+```
+
+### 2. Add per-server guidance (`llm_context`)
+
+In the admin UI, set `llm_context` for an upstream server to influence:
+- the proxy’s MCP `instructions`
+- the `serverLlmContext` field included in search results
+
+Sanity-check it with:
+- `GET /api/mcp-llm-preview`
+
+### 3. Quick admin debugging
+
+If the LLM picks the wrong upstream tool or behaves unexpectedly:
+- Pull recent logs: `GET /api/logs?limit=500`
+- Check the LLM snapshot: `GET /api/mcp-llm-preview`
+
+---
+### Use with Cursor
+
+1. Point Cursor’s MCP server config at:
+   - `http://<host>:<port>/mcp` (your proxy’s Streamable HTTP MCP endpoint)
+2. If auth is enabled, configure Cursor to send:
+   - `Authorization: Bearer <api-client-token>`
+3. Cursor will call the proxy’s `tools/list` and then use:
+   - `searchToolsForDomain`
+   - `searchTool`
+   - `callTool`
+
+---
+### Use with Claude
+
+1. Add an MCP server in your Claude MCP setup pointing at:
+   - `http://<host>:<port>/mcp`
+2. If auth is enabled, ensure the Claude MCP client sends the header:
+   - `Authorization: Bearer <api-client-token>`
+3. Claude will interact with the same three meta-tools and follow the search-then-call pattern.
+
+Tip: use the proxy’s **Admin → LLM preview** to see exactly what Claude will receive in `server.instructions` and the meta-tool schemas.
