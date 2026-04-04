@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import Receive, Scope, Send
 
@@ -60,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="MCP Proxy",
         version="0.1.0",
+        redirect_slashes=False,
         description=(
             "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
             "LLM clients only see searchToolsForDomain, searchTool, and callTool — discover tools by domain "
@@ -95,6 +97,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         https_only=settings.secure_cookies,
         session_cookie="mcp_proxy_session",
     )
+    # Outermost: handle browser CORS preflight before auth middleware sees OPTIONS /mcp.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     app.include_router(api_router, prefix="/api")
 
@@ -107,6 +117,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     admin_dir = Path(settings.static_root).resolve() / "admin"
     if admin_dir.is_dir():
+
+        @app.get("/admin", include_in_schema=False)
+        async def admin_trailing_slash() -> RedirectResponse:
+            """With redirect_slashes=False, `/admin` may not hit the mount; normalize for bookmarks."""
+            return RedirectResponse(url="/admin/", status_code=307)
+
         app.mount(
             "/admin",
             StaticFiles(directory=str(admin_dir), html=True),

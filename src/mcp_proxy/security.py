@@ -102,6 +102,9 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
 
         # Remote MCP clients use Bearer tokens; browsers would get JSON 401 unless Accept prefers HTML.
         if path.rstrip("/") == "/mcp":
+            # CORS preflight has no Bearer; answer from the app stack (CORSMiddleware + MCP mount).
+            if request.method == "OPTIONS":
+                return await call_next(request)
             if request.session.get(SESSION_ADMIN_KEY):
                 return await call_next(request)
             token = bearer_token(request)

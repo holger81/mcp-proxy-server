@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 
 
@@ -15,9 +16,12 @@ class RingLogHandler(logging.Handler):
         self._capacity = capacity
         self._buf: deque[str] = deque(maxlen=capacity)
         self._lock = threading.Lock()
-        self.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+        fmt = logging.Formatter(
+            "%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
+        fmt.converter = time.localtime
+        self.setFormatter(fmt)
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
