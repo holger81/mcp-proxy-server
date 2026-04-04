@@ -8,6 +8,8 @@ services:
       - "2222:8080"
     volumes:
       - mcp-proxy-data:/data
+      # Match container log timestamps to the host clock (same pattern as Frigate / other stacks).
+      - /etc/localtime:/etc/localtime:ro
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
@@ -17,6 +19,8 @@ services:
       MCP_PROXY_SECURE_COOKIES: ${MCP_PROXY_SECURE_COOKIES:-false}
       MCP_PROXY_ADMIN_PASSWORD_FILE: ${MCP_PROXY_ADMIN_PASSWORD_FILE:-}
       MCP_PROXY_SESSION_SECRET_FILE: ${MCP_PROXY_SESSION_SECRET_FILE:-}
+      # Optional: IANA zone name if you prefer env over the localtime bind-mount.
+      # TZ: America/Denver
     restart: unless-stopped
 
 volumes:

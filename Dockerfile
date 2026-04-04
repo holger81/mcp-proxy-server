@@ -17,7 +17,7 @@ COPY static ./static
 RUN uv pip install --system .
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu nodejs npm \
+    && apt-get install -y --no-install-recommends gosu nodejs npm tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
