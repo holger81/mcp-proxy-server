@@ -10,8 +10,22 @@ jobs:
   ssh-deploy:
     runs-on: ubuntu-latest
     steps:
+      # secrets.* is not allowed in step `if:` — use env + shell, then branch on outputs.
+      - id: secrets_ok
+        name: Check deploy secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          if [ -n "${DEPLOY_HOST}" ] && [ -n "${DEPLOY_SSH_KEY}" ] && [ -n "${DEPLOY_PATH}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Remote git pull + docker compose build
-        if: ${{ secrets.DEPLOY_HOST != '' && secrets.DEPLOY_SSH_KEY != '' && secrets.DEPLOY_PATH != '' }}
+        if: steps.secrets_ok.outputs.ready == 'true'
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
@@ -35,7 +49,7 @@ jobs:
             docker compose -f "$file" up -d
 
       - name: Missing SSH secrets
-        if: ${{ secrets.DEPLOY_HOST == '' || secrets.DEPLOY_SSH_KEY == '' || secrets.DEPLOY_PATH == '' }}
+        if: steps.secrets_ok.outputs.ready != 'true'
         run: |
           echo "::error::Set secrets DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH (optional DEPLOY_USER, DEPLOY_BRANCH, DEPLOY_COMPOSE_FILE)."
           exit 1
