@@ -16,8 +16,18 @@ COPY static ./static
 
 RUN uv pip install --system .
 
+# Debian's nodejs/npm are too old for many MCP packages (e.g. engines >=20). Use NodeSource 20.x LTS.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu nodejs npm tzdata \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        gosu \
+        tzdata \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x -o /tmp/nodesource_setup.sh \
+    && bash /tmp/nodesource_setup.sh \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -f /tmp/nodesource_setup.sh \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
