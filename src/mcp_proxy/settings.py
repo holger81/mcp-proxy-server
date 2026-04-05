@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BeforeValidator, field_validator, model_validator
+from pydantic import BeforeValidator, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     # Set true behind HTTPS so cookies get the Secure flag.
     secure_cookies: Annotated[bool, BeforeValidator(_env_bool)] = False
 
+    # --- LLM context limits (0 = unlimited for *_max_chars; tool lists use explicit defaults) ---
+    # Cap searchTool() matches (sorted by relevance).
+    tool_search_max_matches: int = Field(default=25, ge=0, le=500)
+    # searchToolsForDomain: default page size when `limit` is omitted (filtered or listAll).
+    tool_domain_default_limit: int = Field(default=20, ge=1, le=500)
+    # searchToolsForDomain: maximum allowed `limit` per request (clamped).
+    tool_domain_max_limit: int = Field(default=100, ge=1, le=2000)
+    # Truncate tool description in discovery JSON (chars).
+    tool_description_max_chars: int = Field(default=0, ge=0, le=100_000)
+    # Truncate serverLlmContext in discovery JSON (chars).
+    tool_server_llm_context_max_chars: int = Field(default=0, ge=0, le=100_000)
+    # If inputSchema serializes larger than this (chars), replace with a stub (LLM may need to raise limit).
+    tool_input_schema_max_chars: int = Field(default=0, ge=0, le=500_000)
+    # Truncate each text block from upstream callTool (chars).
+    call_tool_response_text_max_chars: int = Field(default=0, ge=0, le=2_000_000)
+    # Use compact JSON for searchToolsForDomain / searchTool payloads (fewer tokens).
+    tool_discovery_compact_json: Annotated[bool, BeforeValidator(_env_bool)] = False
+    # Truncate server instructions string (initialize / tools refresh); 0 = full text.
+    instructions_max_chars: int = Field(default=0, ge=0, le=500_000)
+
     @field_validator("admin_password", "session_secret", mode="before")
     @classmethod
     def strip_secrets(cls, v: object) -> str:
@@ -68,6 +88,12 @@ class Settings(BaseSettings):
         if not p.is_file():
             raise ValueError(f"{var_name}: not a file or missing: {path_str}")
         return p.read_text(encoding="utf-8").strip()
+
+    @model_validator(mode="after")
+    def _align_domain_page_limits(self) -> Self:
+        if self.tool_domain_default_limit > self.tool_domain_max_limit:
+            self.tool_domain_default_limit = self.tool_domain_max_limit
+        return self
 
     @model_validator(mode="after")
     def _load_secrets_from_files(self) -> "Settings":

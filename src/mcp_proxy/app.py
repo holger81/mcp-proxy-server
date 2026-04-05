@@ -115,8 +115,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redirect_slashes=False,
         description=(
             "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
-            "LLM clients only see searchToolsForDomain, searchTool, and callTool — discover tools by domain "
-            "or search, then callTool with the composite toolName and schema-driven arguments."
+            "LLM clients only see searchToolsForDomain, searchTool, and callTool — domain discovery uses a "
+            "query (or explicit listAll) with pagination; then callTool with the composite toolName."
         ),
         lifespan=lifespan,
     )
@@ -128,7 +128,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     if StreamableHTTPSessionManager is None:
         raise RuntimeError("mcp package is missing StreamableHTTPSessionManager; upgrade modelcontextprotocol")
-    mcp_sdk_server = build_proxy_mcp_server(app.state.server_store, app.state.domain_store)
+    mcp_sdk_server = build_proxy_mcp_server(
+        app.state.server_store, app.state.domain_store, settings
+    )
     app.state.mcp_session_manager = StreamableHTTPSessionManager(
         mcp_sdk_server,
         stateless=False,

@@ -21,4 +21,4 @@ async def get_logs(
 async def mcp_llm_preview(request: Request) -> dict:
     store = request.app.state.server_store
     domain_store = request.app.state.domain_store
-    return get_llm_preview_snapshot(store, domain_store)
+    return get_llm_preview_snapshot(store, domain_store, request.app.state.settings)

@@ -94,7 +94,7 @@ The proxy becomes the **intelligence layer between your LLM and your tools**.
 
 Only 3 tools are exposed:
 
-- `searchToolsForDomain` → narrow search space
+- `searchToolsForDomain` → search inside one domain (`query` + pagination, or `listAll` + pagination)
 - `searchTool` → global tool discovery
 - `callTool` → execute `<server-id>/<tool-name>`
 
@@ -325,11 +325,19 @@ They fail because **too many tools look the same**.
 
 Your LLM should follow this pattern:
 
-1. Discover tools with `searchToolsForDomain` or `searchTool`
-2. Select a row and copy the returned `toolName` in the format `<server-id>/<upstream-tool-name>`.
-3. Execute with `callTool` using the `arguments` shape implied by the returned `inputSchema`
+1. Discover tools with `searchToolsForDomain` (domain + `query`, paginated) or `searchTool` (optional domain).
+2. Select a row from `tools[]` and copy `toolName` as `<server-id>/<upstream-tool-name>`.
+3. Execute with `callTool` using the `arguments` shape implied by the returned `inputSchema`.
 
 Example inputs:
+
+```json
+// searchToolsForDomain — prefer a specific query; repeat with higher offset if pagination.hasMore
+{ "domain": "home", "query": "light", "offset": 0 }
+
+// searchToolsForDomain — only when every tool in the domain is needed
+{ "domain": "home", "listAll": true, "offset": 0 }
+```
 
 ```json
 // searchTool

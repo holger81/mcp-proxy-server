@@ -22,6 +22,16 @@ services:
       MCP_PROXY_SESSION_SECRET_FILE: ${MCP_PROXY_SESSION_SECRET_FILE:-}
       # Optional in .env: TZ=America/Denver (IANA). Uses zoneinfo for log timestamps; combine with localtime mount above.
       TZ: ${TZ:-}
+      # --- Optional LLM context caps (0 = unlimited for *_MAX_CHARS) ---
+      # MCP_PROXY_TOOL_SEARCH_MAX_MATCHES: "25"
+      # MCP_PROXY_TOOL_DOMAIN_DEFAULT_LIMIT: "20"
+      # MCP_PROXY_TOOL_DOMAIN_MAX_LIMIT: "100"
+      # MCP_PROXY_TOOL_DESCRIPTION_MAX_CHARS: "0"
+      # MCP_PROXY_TOOL_SERVER_LLM_CONTEXT_MAX_CHARS: "0"
+      # MCP_PROXY_TOOL_INPUT_SCHEMA_MAX_CHARS: "0"
+      # MCP_PROXY_CALL_TOOL_RESPONSE_TEXT_MAX_CHARS: "0"
+      # MCP_PROXY_TOOL_DISCOVERY_COMPACT_JSON: "false"
+      # MCP_PROXY_INSTRUCTIONS_MAX_CHARS: "0"
     restart: unless-stopped
 
 volumes:
