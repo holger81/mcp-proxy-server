@@ -185,6 +185,7 @@
         margin-top: 0.75rem;
         max-height: 36rem;
         overflow: auto;
+        overflow-anchor: none;
         font-size: 0.8rem;
         line-height: 1.35;
       }
@@ -998,15 +999,23 @@
           }, LOGS_POLL_MS);
         }
 
+        function logsScrollMax(el) {
+          return Math.max(0, el.scrollHeight - el.clientHeight);
+        }
+
+        function logsPinToBottom(el) {
+          const y = logsScrollMax(el);
+          el.scrollTop = y;
+          requestAnimationFrame(() => {
+            el.scrollTop = logsScrollMax(el);
+          });
+        }
+
         async function loadLogs(opts) {
           opts = opts || {};
           const silent = opts.silent === true;
           const el = adminLogsPre;
-          const visible = !el.classList.contains("hidden");
-          const wasAtBottom =
-            visible && el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-          const prevScrollTop = el.scrollTop;
-          const prevScrollHeight = el.scrollHeight;
+          const logsTabOpen = !panelLogs.classList.contains("hidden");
 
           if (!silent) {
             logsEmpty.classList.remove("hidden");
@@ -1028,13 +1037,30 @@
           const lines = data.lines || [];
           logsEmpty.classList.add("hidden");
           adminLogsPre.classList.remove("hidden");
+
+          const preShown = !el.classList.contains("hidden");
+          const slop = 12;
+          let stickToBottom;
+          if (!logsTabOpen) {
+            stickToBottom = true;
+          } else if (!preShown || !silent) {
+            stickToBottom = true;
+          } else {
+            stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= slop;
+          }
+
+          const prevScrollTop = el.scrollTop;
+          const prevScrollHeight = el.scrollHeight;
+
           adminLogsPre.textContent = lines.length ? lines.join("\n") : "(no log lines yet)";
+
           requestAnimationFrame(() => {
-            if (!visible || wasAtBottom) {
-              el.scrollTop = el.scrollHeight;
+            if (!logsTabOpen) return;
+            if (stickToBottom) {
+              logsPinToBottom(el);
             } else {
               const delta = el.scrollHeight - prevScrollHeight;
-              el.scrollTop = prevScrollTop + delta;
+              el.scrollTop = Math.max(0, Math.min(prevScrollTop + delta, logsScrollMax(el)));
             }
           });
         }
