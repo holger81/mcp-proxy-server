@@ -1,0 +1,57 @@
+# No container registry required.
+#
+# Option A — SSH rebuild (recommended with Portainer + local build:)
+#   Secrets: DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH (and optional DEPLOY_USER, default root)
+#   DEPLOY_PATH = directory on the host that is a git clone of this repo (same compose file you run).
+#   Optional: DEPLOY_COMPOSE_FILE (default docker-compose.yml), DEPLOY_BRANCH (default main).
+#   The runner will: git pull, docker compose build, docker compose up -d.
+#
+# Option B — Portainer webhook only (works if the stack is tied to Git in Portainer so redeploy pulls + rebuilds)
+#   Secret: PORTAINER_STACK_WEBHOOK_URL
+#
+# You can set both: SSH rebuild runs first; webhook runs after only if the SSH step succeeds (or was skipped).
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remote git pull + docker compose build
+        if: ${{ secrets.DEPLOY_HOST != '' && secrets.DEPLOY_SSH_KEY != '' && secrets.DEPLOY_PATH != '' }}
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
+          COMPOSE_FILE: ${{ secrets.DEPLOY_COMPOSE_FILE }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'root' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_PATH,DEPLOY_BRANCH,COMPOSE_FILE
+          script_stop: true
+          script: |
+            set -euo pipefail
+            branch="${DEPLOY_BRANCH:-main}"
+            file="${COMPOSE_FILE:-docker-compose.yml}"
+            cd "$DEPLOY_PATH"
+            git fetch origin "$branch"
+            git checkout "$branch"
+            git merge --ff-only "origin/$branch" || git reset --hard "origin/$branch"
+            docker compose -f "$file" build
+            docker compose -f "$file" up -d
+
+      - name: Portainer stack webhook
+        if: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL != '' && !failure() }}
+        env:
+          WEBHOOK_URL: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL }}
+        run: curl -fsS -m 120 -X POST "$WEBHOOK_URL"
+
+      - name: Hint — no deploy configured
+        if: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL == '' && (secrets.DEPLOY_HOST == '' || secrets.DEPLOY_SSH_KEY == '' || secrets.DEPLOY_PATH == '') }}
+        run: |
+          echo "::notice::Set SSH secrets (DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH; optional DEPLOY_USER) and/or PORTAINER_STACK_WEBHOOK_URL — see workflow header comments."
