@@ -156,6 +156,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Browsers (e.g. web UIs on another port) cannot read these unless exposed; without
+        # mcp-session-id the second POST fails after a successful initialize.
+        expose_headers=["mcp-session-id", "mcp-protocol-version", "last-event-id"],
     )
     # Outermost: CORS, then richer /mcp lines (UA, session prefix, Origin, X-Forwarded-For).
     app.add_middleware(McpClientAuditMiddleware)
