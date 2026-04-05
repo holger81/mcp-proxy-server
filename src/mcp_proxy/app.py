@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+import re
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -23,6 +26,32 @@ try:
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 except ImportError:  # pragma: no cover
     StreamableHTTPSessionManager = None  # type: ignore[misc, assignment]
+
+_MIN_MCP = (1, 24, 0)
+_log = logging.getLogger("mcp_proxy.compat")
+
+
+def _mcp_version_tuple(ver: str) -> tuple[int, int, int]:
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)", ver.strip())
+    if not m:
+        return (0, 0, 0)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _check_mcp_streamable_http_compat() -> None:
+    """Older mcp rejects initialize without mcp-session-id (JSON-RPC -32600 / Missing session ID)."""
+    try:
+        ver = version("mcp")
+    except PackageNotFoundError:  # pragma: no cover
+        return
+    got = _mcp_version_tuple(ver)
+    _log.info("mcp package version %s (need >= %s.%s.%s for streamable HTTP clients)", ver, *_MIN_MCP)
+    if got < _MIN_MCP:
+        raise RuntimeError(
+            f"Installed mcp=={ver} is too old for this proxy. Streamable HTTP clients (e.g. llamacpp webui) "
+            f"need mcp>={_MIN_MCP[0]}.{_MIN_MCP[1]}.{_MIN_MCP[2]} (fixes initialize without mcp-session-id). "
+            "Rebuild the image without cache: docker compose build --no-cache && docker compose up -d"
+        )
 
 
 class _NormalizeMcpPathASGI:
@@ -75,6 +104,7 @@ async def lifespan(app: FastAPI):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     attach_ring_logging()
+    _check_mcp_streamable_http_compat()
     settings.log_auth_state()
     app = FastAPI(
         title="MCP Proxy",
