@@ -7,7 +7,8 @@ from typing import Callable
 
 from starlette.types import Receive, Scope, Send
 
-log = logging.getLogger("mcp_proxy.mcp_client")
+# Use ``mcp_proxy`` (not a child) so lines always reach the admin ring buffer after uvicorn reconfigures logging.
+log = logging.getLogger("mcp_proxy")
 
 
 def _header_map(scope: Scope) -> dict[str, str]:

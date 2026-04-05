@@ -98,6 +98,8 @@ class _McpStreamableMount:
 async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
     (settings.data_dir / "config").mkdir(parents=True, exist_ok=True)
+    # Uvicorn configures logging after importing the app; re-attach so /mcp audit lines reach the ring buffer.
+    attach_ring_logging()
     async with app.state.mcp_session_manager.run():
         yield
 
