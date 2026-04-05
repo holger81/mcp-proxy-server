@@ -1,0 +1,41 @@
+# Optional: run a remote git pull + docker compose build from GitHub Actions (needs SSH secrets).
+# Does not run automatically — use "Run workflow" manually when you want this path.
+
+name: Deploy (SSH, manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remote git pull + docker compose build
+        if: ${{ secrets.DEPLOY_HOST != '' && secrets.DEPLOY_SSH_KEY != '' && secrets.DEPLOY_PATH != '' }}
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
+          COMPOSE_FILE: ${{ secrets.DEPLOY_COMPOSE_FILE }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'root' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_PATH,DEPLOY_BRANCH,COMPOSE_FILE
+          script_stop: true
+          script: |
+            set -euo pipefail
+            branch="${DEPLOY_BRANCH:-main}"
+            file="${COMPOSE_FILE:-docker-compose.yml}"
+            cd "$DEPLOY_PATH"
+            git fetch origin "$branch"
+            git checkout "$branch"
+            git merge --ff-only "origin/$branch" || git reset --hard "origin/$branch"
+            docker compose -f "$file" build
+            docker compose -f "$file" up -d
+
+      - name: Missing SSH secrets
+        if: ${{ secrets.DEPLOY_HOST == '' || secrets.DEPLOY_SSH_KEY == '' || secrets.DEPLOY_PATH == '' }}
+        run: |
+          echo "::error::Set secrets DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH (optional DEPLOY_USER, DEPLOY_BRANCH, DEPLOY_COMPOSE_FILE)."
+          exit 1
