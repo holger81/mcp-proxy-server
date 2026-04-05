@@ -1,0 +1,22 @@
+# Calls your Portainer (or compatible) stack webhook after each push to main.
+# Add repo secret PORTAINER_STACK_WEBHOOK_URL with the full webhook URL (see below).
+
+name: Stack webhook
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger stack redeploy
+        env:
+          WEBHOOK_URL: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "PORTAINER_STACK_WEBHOOK_URL is not set; skipping."
+            exit 0
+          fi
+          curl -fsS -m 60 -X POST "$WEBHOOK_URL"
