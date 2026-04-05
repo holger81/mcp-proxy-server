@@ -23,12 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Portainer stack redeploy
-        if: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL != '' }}
         env:
           WEBHOOK_URL: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL }}
-        run: curl -fsS -m 120 -X POST "$WEBHOOK_URL"
-
-      - name: Hint — set webhook secret
-        if: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL == '' }}
         run: |
-          echo "::notice::Add repository secret PORTAINER_STACK_WEBHOOK_URL (Portainer stack webhook). See workflow file comments for Git-based stack setup."
+          if [ -n "${WEBHOOK_URL}" ]; then
+            curl -fsS -m 120 -X POST "${WEBHOOK_URL}"
+          else
+            echo "::notice::Add repository secret PORTAINER_STACK_WEBHOOK_URL (Portainer stack webhook). See workflow file comments for Git-based stack setup."
+          fi
