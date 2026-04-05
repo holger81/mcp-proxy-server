@@ -74,7 +74,7 @@ def attach_ring_logging() -> None:
         except Exception:
             pass
     h = _ring_handler
-    for name in ("mcp_proxy", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    for name in ("mcp_proxy", "mcp_proxy.mcp_client", "uvicorn", "uvicorn.error", "uvicorn.access"):
         lg = logging.getLogger(name)
         if not any(type(x) is RingLogHandler for x in lg.handlers):
             lg.addHandler(h)

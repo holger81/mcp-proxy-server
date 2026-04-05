@@ -16,6 +16,7 @@ from starlette.types import Receive, Scope, Send
 from mcp_proxy.api.routes import router as api_router
 from mcp_proxy.client_store import ClientTokenStore
 from mcp_proxy.log_buffer import attach_ring_logging
+from mcp_proxy.mcp_client_log import McpClientAuditMiddleware
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
@@ -147,7 +148,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         https_only=settings.secure_cookies,
         session_cookie="mcp_proxy_session",
     )
-    # Outermost: handle browser CORS preflight before auth middleware sees OPTIONS /mcp.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -155,6 +155,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Outermost: CORS, then richer /mcp lines (UA, session prefix, Origin, X-Forwarded-For).
+    app.add_middleware(McpClientAuditMiddleware)
 
     app.include_router(api_router, prefix="/api")
 
