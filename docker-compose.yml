@@ -1,3 +1,5 @@
+# Local dev: build from this directory. Portainer auto-deploy from git: use deploy/portainer-stack.yml
+# (GHCR image built by GitHub Actions) or the webhook will only restart the old mcp-proxy:latest layer.
 services:
   mcp-proxy:
     build: .

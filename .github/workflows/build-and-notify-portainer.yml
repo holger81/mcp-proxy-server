@@ -1,0 +1,57 @@
+# 1) Builds and pushes the image to GHCR on every push to main (new digest each time).
+# 2) Optionally POSTs the Portainer stack webhook so the host pulls and recreates the container.
+#
+# Portainer: point your stack at deploy/portainer-stack.yml (or merge its service definition)
+# so the service uses `image: ghcr.io/<owner>/<repo>:latest` and `pull_policy: always`.
+# Plain docker-compose.yml with `build: .` + `pull_policy: never` will NOT pick up git changes
+# when the webhook runs — it only restarts the old local image.
+#
+# Repo secret (optional): PORTAINER_STACK_WEBHOOK_URL — full webhook URL from Portainer stack.
+
+name: Build image (GHCR) and notify Portainer
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # github.repository is owner/name, lowercase — valid for GHCR
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  portainer-webhook:
+    needs: docker
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && secrets.PORTAINER_STACK_WEBHOOK_URL != '' }}
+    steps:
+      - name: Trigger Portainer stack redeploy
+        env:
+          WEBHOOK_URL: ${{ secrets.PORTAINER_STACK_WEBHOOK_URL }}
+        run: curl -fsS -m 120 -X POST "$WEBHOOK_URL"
