@@ -412,7 +412,8 @@
       <p class="hint">
         Recent lines from the proxy process (in-memory buffer, last ~1000 lines). Timestamps use the server’s local
         clock. While this tab is open, logs refresh every few seconds; if you scroll up, the view stays anchored instead
-        of jumping to the tail.
+        of jumping to the tail. If you leave the tail in view and return from another tab, the view catches up to the
+        latest lines.
       </p>
       <button type="button" class="secondary small" id="logs-refresh" style="margin-top: 0.5rem">Refresh</button>
       <label for="logs-limit" class="hint" style="display: inline-block; margin-left: 0.75rem">Lines</label>
@@ -982,6 +983,8 @@
 
         let logsPollId = null;
         const LOGS_POLL_MS = 2500;
+        const LOGS_TAIL_SLOP = 12;
+        let logsFollowingTail = false;
 
         function stopLogsPolling() {
           if (logsPollId != null) {
@@ -1003,6 +1006,10 @@
           return Math.max(0, el.scrollHeight - el.clientHeight);
         }
 
+        function logsNearBottom(el) {
+          return el.scrollHeight - el.scrollTop - el.clientHeight <= LOGS_TAIL_SLOP;
+        }
+
         function logsPinToBottom(el) {
           const y = logsScrollMax(el);
           el.scrollTop = y;
@@ -1014,6 +1021,7 @@
         async function loadLogs(opts) {
           opts = opts || {};
           const silent = opts.silent === true;
+          const forceTail = opts.forceTail === true;
           const el = adminLogsPre;
           const logsTabOpen = !panelLogs.classList.contains("hidden");
 
@@ -1039,15 +1047,15 @@
           adminLogsPre.classList.remove("hidden");
 
           const preShown = !el.classList.contains("hidden");
-          const slop = 12;
           let stickToBottom;
           if (!logsTabOpen) {
             stickToBottom = true;
           } else if (!preShown || !silent) {
             stickToBottom = true;
           } else {
-            stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= slop;
+            stickToBottom = logsNearBottom(el);
           }
+          if (forceTail) stickToBottom = true;
 
           const prevScrollTop = el.scrollTop;
           const prevScrollHeight = el.scrollHeight;
@@ -1058,12 +1066,32 @@
             if (!logsTabOpen) return;
             if (stickToBottom) {
               logsPinToBottom(el);
+              logsFollowingTail = true;
             } else {
               const delta = el.scrollHeight - prevScrollHeight;
               el.scrollTop = Math.max(0, Math.min(prevScrollTop + delta, logsScrollMax(el)));
+              logsFollowingTail = false;
             }
           });
         }
+
+        adminLogsPre.addEventListener(
+          "scroll",
+          () => {
+            if (!panelLogs.classList.contains("hidden") && !adminLogsPre.classList.contains("hidden")) {
+              logsFollowingTail = logsNearBottom(adminLogsPre);
+            }
+          },
+          { passive: true },
+        );
+
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState !== "visible") return;
+          if (panelLogs.classList.contains("hidden") || adminLogsPre.classList.contains("hidden")) return;
+          if (!logsFollowingTail) return;
+          logsPinToBottom(adminLogsPre);
+          loadLogs({ silent: true, forceTail: true });
+        });
 
         async function loadLlmPreview() {
           llmEmpty.classList.remove("hidden");
