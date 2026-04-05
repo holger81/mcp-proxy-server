@@ -6,10 +6,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.api.routes import router as api_router
@@ -27,21 +25,22 @@ except ImportError:  # pragma: no cover
     StreamableHTTPSessionManager = None  # type: ignore[misc, assignment]
 
 
-class _NormalizeMcpPathMiddleware(BaseHTTPMiddleware):
-    """Starlette Mount('/mcp') matches `/mcp/...` but not bare `/mcp` when redirect_slashes is off.
+class _NormalizeMcpPathASGI:
+    """Rewrite bare ``/mcp`` → ``/mcp/`` so ``Mount('/mcp')`` matches (``redirect_slashes`` is off).
 
-    Clients often POST to `http://host/mcp` without a trailing slash; normalize so the mount receives `/mcp/`
-    without an HTTP redirect (which can drop or mishandle POST bodies).
+    Implemented as plain ASGI: ``BaseHTTPMiddleware`` can forward a stale scope to the router, so POST ``/mcp``
+    still 404ed after normalization.
     """
 
-    async def dispatch(self, request: Request, call_next):
-        scope = request.scope
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http" and scope.get("path") == "/mcp":
-            new_scope = dict(scope)
-            new_scope["path"] = "/mcp/"
-            new_scope["raw_path"] = b"/mcp/"
-            request = Request(new_scope, request.receive)
-        return await call_next(request)
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
+            scope["raw_path"] = b"/mcp/"
+        await self.app(scope, receive, send)
 
 
 class _McpStreamableMount:
@@ -108,7 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else "dev-no-auth-session-key-do-not-use"
     )
     # Innermost of the HTTP stack (runs just before routing): fix `/mcp` vs `/mcp/` for the mount.
-    app.add_middleware(_NormalizeMcpPathMiddleware)
+    app.add_middleware(_NormalizeMcpPathASGI)
     app.add_middleware(AuthEnforcementMiddleware, settings=settings)
     app.add_middleware(
         SessionMiddleware,

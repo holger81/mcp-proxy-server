@@ -8,14 +8,22 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 class _LocalTimeFormatter(logging.Formatter):
-    """Format ``asctime`` using the process wall clock (honours ``TZ`` and ``/etc/localtime`` on Unix)."""
+    """Format ``asctime`` in local wall time (``TZ`` if set, else libc after ``tzset()`` / ``/etc/localtime``)."""
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
-        dt = datetime.fromtimestamp(record.created)
         fmt = datefmt or "%Y-%m-%d %H:%M:%S"
+        tz_name = (os.environ.get("TZ") or "").strip()
+        if tz_name:
+            try:
+                dt = datetime.fromtimestamp(record.created, tz=ZoneInfo(tz_name))
+                return dt.strftime(fmt)
+            except Exception:
+                pass
+        dt = datetime.fromtimestamp(record.created)
         return dt.strftime(fmt)
 
 

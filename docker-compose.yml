@@ -19,8 +19,8 @@ services:
       MCP_PROXY_SECURE_COOKIES: ${MCP_PROXY_SECURE_COOKIES:-false}
       MCP_PROXY_ADMIN_PASSWORD_FILE: ${MCP_PROXY_ADMIN_PASSWORD_FILE:-}
       MCP_PROXY_SESSION_SECRET_FILE: ${MCP_PROXY_SESSION_SECRET_FILE:-}
-      # Optional: IANA zone name if you prefer env over the localtime bind-mount.
-      # TZ: America/Denver
+      # Optional in .env: TZ=America/Denver (IANA). Uses zoneinfo for log timestamps; combine with localtime mount above.
+      TZ: ${TZ:-}
     restart: unless-stopped
 
 volumes:
