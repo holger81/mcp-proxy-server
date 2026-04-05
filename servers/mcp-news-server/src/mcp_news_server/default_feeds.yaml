@@ -1,0 +1,57 @@
+# Default RSS sources for Docker / first-time setup. Mix of international wires,
+# public broadcasters, and regional outlets; no single feed is perfectly "neutral".
+feeds:
+  # --- World / international ---
+  - url: "https://feeds.bbci.co.uk/news/world/rss.xml"
+    label: "[World] BBC News — World"
+    enabled: true
+  - url: "https://rss.dw.com/rdf/rss-en-world"
+    label: "[World] Deutsche Welle — World (EN)"
+    enabled: true
+  - url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml"
+    label: "[World] UN News"
+    enabled: true
+  - url: "https://www.france24.com/en/rss"
+    label: "[World] France 24 — World (EN)"
+    enabled: true
+
+  # --- United States (national) ---
+  - url: "https://feeds.npr.org/1001/rss.xml"
+    label: "[USA] NPR — National news"
+    enabled: true
+  - url: "https://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml"
+    label: "[USA] BBC News — US & Canada"
+    enabled: true
+  - url: "https://www.pbs.org/newshour/feeds/rss/headlines"
+    label: "[USA] PBS NewsHour — Headlines"
+    enabled: true
+
+  # --- Germany ---
+  - url: "https://rss.dw.com/rdf/rss-en-germany"
+    label: "[Germany] Deutsche Welle — Germany (EN)"
+    enabled: true
+  - url: "https://www.tagesschau.de/index~rss2.xml"
+    label: "[Germany] tagesschau — Top stories (DE)"
+    enabled: true
+
+  # --- California (statewide) ---
+  - url: "https://calmatters.org/feed/"
+    label: "[California] CalMatters"
+    enabled: true
+  - url: "https://www.latimes.com/california/rss2.0.xml"
+    label: "[California] Los Angeles Times — California"
+    enabled: true
+
+  # --- San Francisco Bay Area / South Bay ---
+  - url: "https://www.mercurynews.com/feed/"
+    label: "[Bay Area] The Mercury News"
+    enabled: true
+  - url: "https://www.sfchronicle.com/bay-area/feed/"
+    label: "[Bay Area] San Francisco Chronicle — Bay Area"
+    enabled: true
+  - url: "https://www.kqed.org/news/feed/rss"
+    label: "[Bay Area] KQED — News"
+    enabled: true
+  - url: "https://www.eastbaytimes.com/feed/"
+    label: "[Bay Area] East Bay Times"
+    enabled: true

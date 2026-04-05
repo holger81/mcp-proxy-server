@@ -13,8 +13,11 @@ RUN pip install --no-cache-dir --upgrade pip "uv~=0.5.11"
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY static ./static
+COPY servers/mcp-news-server ./servers/mcp-news-server
+COPY docker ./docker
 
-RUN uv pip install --system .
+RUN uv pip install --system . \
+    && uv pip install --system ./servers/mcp-news-server
 
 # Debian's nodejs/npm are too old for many MCP packages (e.g. engines >=20). Use NodeSource 20.x LTS.
 RUN apt-get update \
@@ -34,7 +37,11 @@ RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh \
+    && chmod +x /app/docker/seed_mcp_news.py
+
+# Bundled default RSS list for first-time /data volume (copied by seed script).
+COPY servers/mcp-news-server/src/mcp_news_server/default_feeds.yaml /app/mcp-news-default-feeds.yaml
 
 EXPOSE 8080
 

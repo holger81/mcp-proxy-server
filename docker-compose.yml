@@ -14,6 +14,9 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
+      # Default RSS bundle + stdio server `mcp-news` are seeded on first start (see docker/seed_mcp_news.py).
+      # Optional: point at your own YAML (must match feeds.yaml shape).
+      # MCP_NEWS_DEFAULT_FEEDS: /app/mcp-news-default-feeds.yaml
       # Pass stack / .env values into the container (Portainer “Environment” only applies if referenced here).
       MCP_PROXY_ADMIN_PASSWORD: ${MCP_PROXY_ADMIN_PASSWORD:-}
       MCP_PROXY_SESSION_SECRET: ${MCP_PROXY_SESSION_SECRET:-}
