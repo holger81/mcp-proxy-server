@@ -170,7 +170,7 @@ class RegisterStdioPackageBody(BaseModel):
     package: str = Field(min_length=1, max_length=200)
     display_name: str | None = None
     llm_context: str = Field(default="", max_length=12000)
-    env: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] | None = None
 
     @field_validator("server_id")
     @classmethod
@@ -203,9 +203,9 @@ class RegisterStdioPackageBody(BaseModel):
 
     @field_validator("env", mode="before")
     @classmethod
-    def env_obj(cls, v: Any) -> dict[str, str]:
+    def env_obj(cls, v: Any) -> dict[str, str] | None:
         if v is None:
-            return {}
+            return None
         if not isinstance(v, dict):
             raise TypeError("env must be a JSON object")
         return {str(k): str(val) for k, val in v.items()}
@@ -287,6 +287,11 @@ async def register_stdio_package(
             status_code=409,
             detail=f"server id {body.server_id!r} already exists as HTTP; choose another id.",
         )
+    env = (
+        body.env
+        if body.env is not None
+        else (existing.env if existing is not None else {})
+    )
 
     server = UpstreamServer(
         id=body.server_id,
@@ -297,7 +302,7 @@ async def register_stdio_package(
         llm_context=body.llm_context,
         command=suggested,
         cwd=None,
-        env=body.env,
+        env=env,
     )
 
     try:

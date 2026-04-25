@@ -960,7 +960,12 @@ def build_proxy_mcp_server(
             if display_name is not None:
                 display_name = str(display_name).strip() or None
             llm_context = str(args.get("llmContext", ""))
-            env = _coerce_str_dict_arg("env", args.get("env"))
+            if "env" in args:
+                env = _coerce_str_dict_arg("env", args.get("env"))
+            elif existing is not None:
+                env = dict(existing.env)
+            else:
+                env = {}
             server = UpstreamServer(
                 id=sid,
                 domain=domain,
