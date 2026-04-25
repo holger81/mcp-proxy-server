@@ -7,7 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -46,7 +46,11 @@ def _check_mcp_streamable_http_compat() -> None:
     except PackageNotFoundError:  # pragma: no cover
         return
     got = _mcp_version_tuple(ver)
-    _log.info("mcp package version %s (need >= %s.%s.%s for streamable HTTP clients)", ver, *_MIN_MCP)
+    _log.info(
+        "mcp package version %s (need >= %s.%s.%s for streamable HTTP clients)",
+        ver,
+        *_MIN_MCP,
+    )
     if got < _MIN_MCP:
         raise RuntimeError(
             f"Installed mcp=={ver} is too old for this proxy. Streamable HTTP clients (e.g. llamacpp webui) "
@@ -115,8 +119,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redirect_slashes=False,
         description=(
             "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
-            "LLM clients only see searchToolsForDomain, searchTool, and callTool — domain discovery uses a "
-            "query (or explicit listAll) with pagination; then callTool with the composite toolName."
+            "LLM clients get discovery/execution tools (searchToolsForDomain, searchTool, callTool). "
+            "Server administration tools are exposed as a virtual upstream domain and invoked via callTool."
         ),
         lifespan=lifespan,
     )
@@ -127,7 +131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.domain_store.ensure_default_domain()
 
     if StreamableHTTPSessionManager is None:
-        raise RuntimeError("mcp package is missing StreamableHTTPSessionManager; upgrade modelcontextprotocol")
+        raise RuntimeError(
+            "mcp package is missing StreamableHTTPSessionManager; upgrade modelcontextprotocol"
+        )
     mcp_sdk_server = build_proxy_mcp_server(
         app.state.server_store, app.state.domain_store, settings
     )

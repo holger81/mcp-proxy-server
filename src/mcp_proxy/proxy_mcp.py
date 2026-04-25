@@ -1,4 +1,4 @@
-"""MCP proxy: only exposes searchToolsForDomain, searchTool, and callTool (domains group upstreams)."""
+"""MCP proxy: discovery/execution tools plus server-management tools."""
 
 from __future__ import annotations
 
@@ -14,14 +14,23 @@ from mcp.shared.exceptions import McpError
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
-from mcp_proxy.models import UpstreamServer
+from mcp_proxy.models import UpstreamServer, validate_slug_id
+from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
+from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.settings import Settings
+from mcp_proxy.stdio_package_meta import (
+    get_stdio_meta,
+    remove_stdio_meta,
+    set_stdio_meta,
+)
 from mcp_proxy.upstream_inspect import _upstream_streams
 
 log = logging.getLogger(__name__)
 
 _UPSTREAM_TIMEOUT_S = 120.0
 _TRUNC_SUFFIX = " …[truncated]"
+_ADMIN_DOMAIN_ID = "mcp-tools-administration"
+_ADMIN_SERVER_ID = "mcp-tools-admin"
 
 
 def _truncate_text(text: str, max_chars: int, suffix: str = _TRUNC_SUFFIX) -> str:
@@ -104,7 +113,41 @@ def _coerce_bool_arg(key: str, raw: object) -> bool:
     )
 
 
-def _parse_domain_pagination(args: dict[str, Any], settings: Settings) -> tuple[int, int]:
+def _coerce_str_dict_arg(key: str, raw: object) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise McpError(
+            mcp_types.ErrorData(
+                code=mcp_types.INVALID_PARAMS,
+                message=f"{key!r} must be an object of string key/value pairs.",
+            )
+        )
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def _npm_package_name(spec: str) -> str:
+    s = spec.strip()
+    if s.startswith("@"):
+        i = s.rfind("@")
+        if i > s.find("/"):
+            return s[:i]
+        return s
+    return s.split("@", 1)[0]
+
+
+def _pypi_dist_from_spec(spec: str) -> str:
+    s = spec.strip()
+    for sep in ("===", "==", ">=", "<=", "!=", "~=", ">", "<"):
+        if sep in s:
+            s = s.split(sep, 1)[0].strip()
+            break
+    return s
+
+
+def _parse_domain_pagination(
+    args: dict[str, Any], settings: Settings
+) -> tuple[int, int]:
     off_raw = args.get("offset", 0)
     try:
         offset = int(off_raw) if off_raw is not None else 0
@@ -174,7 +217,9 @@ def _truncate_call_tool_content(
             t = b.text
             if isinstance(t, str) and len(t) > max_chars:
                 out.append(
-                    mcp_types.TextContent(type="text", text=_truncate_text(t, max_chars))
+                    mcp_types.TextContent(
+                        type="text", text=_truncate_text(t, max_chars)
+                    )
                 )
             else:
                 out.append(b)
@@ -218,7 +263,9 @@ async def _list_upstream_tools(server: UpstreamServer) -> list[mcp_types.Tool]:
                 return list(res.tools)
 
 
-def _tool_defs_for_server(server: UpstreamServer, tools: list[mcp_types.Tool]) -> list[dict[str, Any]]:
+def _tool_defs_for_server(
+    server: UpstreamServer, tools: list[mcp_types.Tool]
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     note = (server.llm_context or "").strip()
     for t in tools:
@@ -236,8 +283,90 @@ def _tool_defs_for_server(server: UpstreamServer, tools: list[mcp_types.Tool]) -
     return out
 
 
-async def _collect_all_tool_defs(store: ServerConfigStore, domain_id: str | None) -> list[dict[str, Any]]:
+def _admin_tool_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/listServers",
+            "description": (
+                "List configured upstream MCP servers (id, type, domain, enabled, target, and "
+                "stdio package metadata when available)."
+            ),
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/setServerEnabled",
+            "description": "Enable or disable a configured server.",
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "serverId": {
+                        "type": "string",
+                        "description": "Configured server id (slug).",
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable, false to disable.",
+                    },
+                },
+                "required": ["serverId", "enabled"],
+            },
+        },
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/registerStdioServer",
+            "description": (
+                "Install a PyPI/npm package under /data and create/update a stdio server."
+            ),
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ecosystem": {"type": "string", "enum": ["pypi", "npm"]},
+                    "serverId": {"type": "string"},
+                    "domain": {"type": "string"},
+                    "package": {"type": "string", "description": "Package spec."},
+                    "displayName": {"type": "string"},
+                    "llmContext": {"type": "string"},
+                    "env": {"type": "object", "additionalProperties": True},
+                },
+                "required": ["ecosystem", "serverId", "domain", "package"],
+            },
+        },
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/upgradeStdioServer",
+            "description": "Upgrade an installed stdio server package to the latest version.",
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {
+                "type": "object",
+                "properties": {"serverId": {"type": "string"}},
+                "required": ["serverId"],
+            },
+        },
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/removeServer",
+            "description": "Remove a configured server.",
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {
+                "type": "object",
+                "properties": {"serverId": {"type": "string"}},
+                "required": ["serverId"],
+            },
+        },
+    ]
+
+
+async def _collect_all_tool_defs(
+    store: ServerConfigStore, domain_id: str | None
+) -> list[dict[str, Any]]:
     combined: list[dict[str, Any]] = []
+    if domain_id in (None, _ADMIN_DOMAIN_ID):
+        combined.extend(_admin_tool_rows())
     for s in store.list_servers():
         if not s.enabled:
             continue
@@ -262,11 +391,12 @@ def _domain_enum_schema(domain_ids: list[str], description: str) -> dict[str, An
 def _base_instructions() -> str:
     return (
         "You are connected through an MCP proxy. Individual upstream tools are NOT listed at the top level. "
-        "As an LLM, you must use exactly the three tools below in sequence when you need a capability "
+        "As an LLM, you should usually use the discovery/execution tools in sequence when you need a capability "
         "(e.g. smart home, network, or other MCP backends registered in the proxy).\n\n"
         "Workflow:\n"
         "1) Choose a domain id from the `domain` enum on searchToolsForDomain / searchTool (refreshed each "
-        "tools/list). Domains group upstream servers (configured in the proxy admin UI).\n"
+        "tools/list). Domains group upstream servers (configured in the proxy admin UI), plus a built-in "
+        f"admin domain `{_ADMIN_DOMAIN_ID}`.\n"
         "2) Discover tools: call searchToolsForDomain(domain, query) with a specific substring to limit results "
         "(name/description, case-insensitive); responses are paginated (offset/limit, hasMore). "
         "Only when you truly need the full catalog, set listAll=true and page through every tool in that domain "
@@ -277,14 +407,24 @@ def _base_instructions() -> str:
         "Use inputSchema to know required and optional parameters.\n"
         "4) Execute: call callTool with toolName exactly as returned (format `<server-id>/<upstream-tool-name>`) "
         "and arguments as a JSON object matching that schema.\n\n"
+        "Proxy management tools are exposed through the same discovery flow under domain "
+        f"`{_ADMIN_DOMAIN_ID}` (serverId `{_ADMIN_SERVER_ID}`); discover with searchToolsForDomain/searchTool, "
+        "then execute via callTool.\n\n"
         "Do not invent tool names. Always obtain toolName from searchToolsForDomain or searchTool first. "
         "If unsure which domain applies, try searchTool with a broad query across all domains (omit domain), "
         "then narrow down."
     )
 
 
-def full_instructions_for_store(store: ServerConfigStore, instructions_max_chars: int = 0) -> str:
-    parts = [_base_instructions(), "", "## Upstream server notes (admin → LLM context)", ""]
+def full_instructions_for_store(
+    store: ServerConfigStore, instructions_max_chars: int = 0
+) -> str:
+    parts = [
+        _base_instructions(),
+        "",
+        "## Upstream server notes (admin → LLM context)",
+        "",
+    ]
     any_note = False
     for s in sorted(store.list_servers(), key=lambda x: x.id):
         note = (s.llm_context or "").strip()
@@ -297,11 +437,15 @@ def full_instructions_for_store(store: ServerConfigStore, instructions_max_chars
         parts.append("")
     if not any_note:
         parts.append(
-            "_No per-server notes yet. Configure \"LLM / instructions\" for each server in the admin UI._"
+            '_No per-server notes yet. Configure "LLM / instructions" for each server in the admin UI._'
         )
         parts.append("")
     text = "\n".join(parts)
-    return _truncate_text(text, instructions_max_chars) if instructions_max_chars > 0 else text
+    return (
+        _truncate_text(text, instructions_max_chars)
+        if instructions_max_chars > 0
+        else text
+    )
 
 
 def build_meta_tool_list(domain_ids: list[str]) -> list[mcp_types.Tool]:
@@ -412,11 +556,14 @@ def get_llm_preview_snapshot(
 ) -> dict[str, Any]:
     """Serializable view of what MCP clients receive for tools + instructions (admin preview)."""
     cfg = settings or Settings()
-    ids = sorted({d.id for d in domain_store.list_records()})
+    ids = {d.id for d in domain_store.list_records()}
     if not ids:
-        ids = ["default"]
+        ids = {"default"}
+    ids.add(_ADMIN_DOMAIN_ID)
     tools = build_meta_tool_list(ids)
-    tool_dicts = [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools]
+    tool_dicts = [
+        t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools
+    ]
     return {
         "server": {
             "name": "mcp-proxy",
@@ -447,16 +594,23 @@ def build_proxy_mcp_server(
     server = Server(
         "mcp-proxy",
         version="0.1.0",
-        instructions=full_instructions_for_store(store, settings.instructions_max_chars),
+        instructions=full_instructions_for_store(
+            store, settings.instructions_max_chars
+        ),
     )
 
     def _domain_ids() -> list[str]:
-        ids = sorted({d.id for d in domain_store.list_records()})
-        return ids if ids else ["default"]
+        ids = {d.id for d in domain_store.list_records()}
+        if not ids:
+            ids = {"default"}
+        ids.add(_ADMIN_DOMAIN_ID)
+        return sorted(ids)
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        server.instructions = full_instructions_for_store(store, settings.instructions_max_chars)
+        server.instructions = full_instructions_for_store(
+            store, settings.instructions_max_chars
+        )
         return build_meta_tool_list(_domain_ids())
 
     @server.call_tool()
@@ -475,11 +629,11 @@ def build_proxy_mcp_server(
                     )
                 )
             dom = dom.strip()
-            if dom not in domain_store.id_set():
+            if dom not in set(_domain_ids()):
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INVALID_PARAMS,
-                        message=f"Unknown domain {dom!r}. Known: {sorted(domain_store.id_set())}",
+                        message=f"Unknown domain {dom!r}. Known: {_domain_ids()}",
                     )
                 )
             list_all = _coerce_bool_arg("listAll", args.get("listAll"))
@@ -560,7 +714,7 @@ def build_proxy_mcp_server(
                         )
                     )
                 dom_filter = args["domain"].strip()
-                if dom_filter not in domain_store.id_set():
+                if dom_filter not in set(_domain_ids()):
                     raise McpError(
                         mcp_types.ErrorData(
                             code=mcp_types.INVALID_PARAMS,
@@ -600,6 +754,8 @@ def build_proxy_mcp_server(
                     )
                 )
             sid, orig = _split_proxy_tool_name(tool_name.strip())
+            if sid == _ADMIN_SERVER_ID:
+                return await call_tool(orig, tool_args)
             upstream = store.get(sid)
             if upstream is None or not upstream.enabled:
                 raise McpError(
@@ -610,11 +766,16 @@ def build_proxy_mcp_server(
                 )
             try:
                 with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-                    async with _upstream_streams(upstream) as (read_stream, write_stream):
+                    async with _upstream_streams(upstream) as (
+                        read_stream,
+                        write_stream,
+                    ):
                         async with ClientSession(
                             read_stream,
                             write_stream,
-                            client_info=mcp_types.Implementation(name="mcp-proxy", version="0.1.0"),
+                            client_info=mcp_types.Implementation(
+                                name="mcp-proxy", version="0.1.0"
+                            ),
                         ) as session:
                             await session.initialize()
                             result = await session.call_tool(orig, tool_args)
@@ -640,10 +801,317 @@ def build_proxy_mcp_server(
                 settings.call_tool_response_text_max_chars,
             )
 
+        if name == "listServers":
+            rows: list[dict[str, Any]] = []
+            for s in store.list_servers():
+                row: dict[str, Any] = {
+                    "id": s.id,
+                    "domain": s.domain,
+                    "type": s.type,
+                    "enabled": s.enabled,
+                    "displayName": s.display_name,
+                    "target": (
+                        s.url if s.type == "http" else (" ".join(s.command or []))
+                    ),
+                }
+                if s.type == "stdio":
+                    meta = get_stdio_meta(settings.data_dir, s.id)
+                    if meta:
+                        row["managed"] = True
+                        row["ecosystem"] = meta.get("ecosystem")
+                        row["packageSpec"] = meta.get("package_spec")
+                    else:
+                        row["managed"] = False
+                rows.append(row)
+            rows.sort(key=lambda r: str(r.get("id", "")))
+            return [
+                mcp_types.TextContent(type="text", text=_json_discovery(rows, settings))
+            ]
+
+        if name == "setServerEnabled":
+            server_id = args.get("serverId")
+            if not isinstance(server_id, str) or not server_id.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'serverId' (string).",
+                    )
+                )
+            enabled = _coerce_bool_arg("enabled", args.get("enabled"))
+            sid = validate_slug_id(server_id)
+            srv = store.get(sid)
+            if srv is None:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown server id {sid!r}.",
+                    )
+                )
+            srv.enabled = enabled
+            store.update(sid, srv)
+            payload = {"ok": True, "serverId": sid, "enabled": enabled}
+            return [
+                mcp_types.TextContent(
+                    type="text", text=_json_discovery(payload, settings)
+                )
+            ]
+
+        if name == "registerStdioServer":
+            ecosystem = args.get("ecosystem")
+            if ecosystem not in {"pypi", "npm"}:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'ecosystem' must be 'pypi' or 'npm'.",
+                    )
+                )
+            server_id_raw = args.get("serverId")
+            domain_raw = args.get("domain")
+            package_raw = args.get("package")
+            if not isinstance(server_id_raw, str) or not server_id_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'serverId'.",
+                    )
+                )
+            if not isinstance(domain_raw, str) or not domain_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'domain'.",
+                    )
+                )
+            if not isinstance(package_raw, str) or not package_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'package'.",
+                    )
+                )
+            sid = validate_slug_id(server_id_raw)
+            domain = validate_slug_id(domain_raw)
+            package_spec = package_raw.strip()
+            if domain not in domain_store.id_set():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown domain {domain!r}.",
+                    )
+                )
+            if ecosystem == "pypi":
+                if not settings.allow_pypi_install:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message="PyPI install is disabled (MCP_PROXY_ALLOW_PYPI_INSTALL is false).",
+                        )
+                    )
+                validate_package_spec(package_spec)
+                result = await anyio.to_thread.run_sync(
+                    install_into_venv, settings.data_dir, sid, package_spec
+                )
+            else:
+                if not settings.allow_npm_install:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message="npm install is disabled (MCP_PROXY_ALLOW_NPM_INSTALL is false).",
+                        )
+                    )
+                validate_npm_package_spec(package_spec)
+                result = await anyio.to_thread.run_sync(
+                    install_npm_prefix, settings.data_dir, sid, package_spec
+                )
+            if not result.ok:
+                payload = {
+                    "ok": False,
+                    "registered": False,
+                    "detail": "Install command failed (see log).",
+                    "log": result.log,
+                }
+                return [
+                    mcp_types.TextContent(
+                        type="text", text=_json_discovery(payload, settings)
+                    )
+                ]
+            suggested = result.suggested_command
+            if not suggested:
+                payload = {
+                    "ok": False,
+                    "registered": False,
+                    "detail": "Install succeeded but no CLI binary was detected.",
+                    "log": result.log,
+                }
+                return [
+                    mcp_types.TextContent(
+                        type="text", text=_json_discovery(payload, settings)
+                    )
+                ]
+            existing = store.get(sid)
+            if existing is not None and existing.type != "stdio":
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"server id {sid!r} already exists as HTTP.",
+                    )
+                )
+            display_name = args.get("displayName")
+            if display_name is not None:
+                display_name = str(display_name).strip() or None
+            llm_context = str(args.get("llmContext", ""))
+            env = _coerce_str_dict_arg("env", args.get("env"))
+            server = UpstreamServer(
+                id=sid,
+                domain=domain,
+                type="stdio",
+                enabled=True,
+                display_name=display_name,
+                llm_context=llm_context,
+                command=[suggested],
+                cwd=None,
+                env=env,
+            )
+            try:
+                store.add(server)
+            except ValueError:
+                store.update(sid, server)
+            set_stdio_meta(settings.data_dir, sid, ecosystem, package_spec)
+            payload = {
+                "ok": True,
+                "registered": True,
+                "server": server.model_dump(mode="json"),
+                "log": result.log,
+            }
+            return [
+                mcp_types.TextContent(
+                    type="text", text=_json_discovery(payload, settings)
+                )
+            ]
+
+        if name == "upgradeStdioServer":
+            server_id = args.get("serverId")
+            if not isinstance(server_id, str) or not server_id.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'serverId'.",
+                    )
+                )
+            sid = validate_slug_id(server_id)
+            srv = store.get(sid)
+            if srv is None:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown server id {sid!r}.",
+                    )
+                )
+            if srv.type != "stdio":
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Server {sid!r} is not stdio.",
+                    )
+                )
+            meta = get_stdio_meta(settings.data_dir, sid)
+            if not meta:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="No package metadata found for this server. Reinstall once to enable upgrades.",
+                    )
+                )
+            ecosystem = meta["ecosystem"]
+            upgrade_spec = (
+                _npm_package_name(meta["package_spec"])
+                if ecosystem == "npm"
+                else _pypi_dist_from_spec(meta["package_spec"])
+            )
+            if ecosystem == "pypi":
+                if not settings.allow_pypi_install:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message="PyPI install is disabled (MCP_PROXY_ALLOW_PYPI_INSTALL is false).",
+                        )
+                    )
+                result = await anyio.to_thread.run_sync(
+                    install_into_venv, settings.data_dir, sid, upgrade_spec
+                )
+            else:
+                if not settings.allow_npm_install:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message="npm install is disabled (MCP_PROXY_ALLOW_NPM_INSTALL is false).",
+                        )
+                    )
+                result = await anyio.to_thread.run_sync(
+                    install_npm_prefix, settings.data_dir, sid, upgrade_spec
+                )
+            if not result.ok:
+                payload = {
+                    "ok": False,
+                    "upgraded": False,
+                    "detail": "Upgrade install failed.",
+                    "log": result.log,
+                }
+                return [
+                    mcp_types.TextContent(
+                        type="text", text=_json_discovery(payload, settings)
+                    )
+                ]
+            if result.suggested_command:
+                srv.command = [result.suggested_command]
+                store.update(sid, srv)
+            set_stdio_meta(settings.data_dir, sid, ecosystem, upgrade_spec)
+            payload = {
+                "ok": True,
+                "upgraded": True,
+                "serverId": sid,
+                "packageSpec": upgrade_spec,
+                "log": result.log,
+            }
+            return [
+                mcp_types.TextContent(
+                    type="text", text=_json_discovery(payload, settings)
+                )
+            ]
+
+        if name == "removeServer":
+            server_id = args.get("serverId")
+            if not isinstance(server_id, str) or not server_id.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'serverId'.",
+                    )
+                )
+            sid = validate_slug_id(server_id)
+            removed = store.remove(sid)
+            if not removed:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown server id {sid!r}.",
+                    )
+                )
+            remove_stdio_meta(settings.data_dir, sid)
+            payload = {"ok": True, "removed": True, "serverId": sid}
+            return [
+                mcp_types.TextContent(
+                    type="text", text=_json_discovery(payload, settings)
+                )
+            ]
+
         raise McpError(
             mcp_types.ErrorData(
                 code=mcp_types.METHOD_NOT_FOUND,
-                message=f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, or callTool.",
+                message=(
+                    f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool, listServers, "
+                    "setServerEnabled, registerStdioServer, upgradeStdioServer, or removeServer."
+                ),
             )
         )
 

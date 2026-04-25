@@ -340,6 +340,7 @@
               <th>Type</th>
               <th>HTTP mode</th>
               <th>Target</th>
+              <th>Package</th>
               <th>Inspect</th>
               <th>Actions</th>
             </tr>
@@ -620,6 +621,46 @@
           return String(cmd);
         }
 
+        async function fetchStdioStatus(serverId) {
+          const res = await apiFetch(api + "/" + encodeURIComponent(serverId) + "/stdio-package-status");
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            return { ok: false, detail: typeof data.detail === "string" ? data.detail : "status lookup failed (" + res.status + ")" };
+          }
+          return { ok: true, data };
+        }
+
+        function formatStdioStatus(data) {
+          if (!data || !data.managed) return "Not managed (manual stdio)";
+          const eco = data.ecosystem || "—";
+          const spec = data.package_spec || "—";
+          const cur = data.installed_version || "?";
+          const latest = data.latest_version || "?";
+          if (data.update_available) {
+            return eco + " " + spec + "\n" + cur + " -> " + latest + " (update available)";
+          }
+          return eco + " " + spec + "\n" + cur + " (latest " + latest + ")";
+        }
+
+        async function upgradeStdioServer(serverId, pkgPre) {
+          pkgPre.textContent = "Upgrading…";
+          const res = await apiFetch(api + "/" + encodeURIComponent(serverId) + "/upgrade-stdio-package", {
+            method: "POST",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            const msg = typeof data.detail === "string" ? data.detail : "Upgrade failed (" + res.status + ")";
+            pkgPre.textContent = "Upgrade failed: " + msg;
+            return;
+          }
+          const status = data.status || null;
+          pkgPre.textContent = status ? formatStdioStatus(status) : "Upgraded.";
+          if (data.log) {
+            inspectOut.classList.remove("hidden");
+            inspectOut.textContent = data.log;
+          }
+        }
+
         function openEdit(s) {
           editMsg.innerHTML = "";
           document.getElementById("e-id").value = s.id;
@@ -768,6 +809,13 @@
             pre.style.padding = "0";
             pre.textContent = targetCell(s);
             tdTgt.appendChild(pre);
+            const tdPkg = document.createElement("td");
+            const pkgPre = document.createElement("pre");
+            pkgPre.style.margin = "0";
+            pkgPre.style.background = "transparent";
+            pkgPre.style.padding = "0";
+            pkgPre.textContent = s.type === "stdio" ? "Loading…" : "—";
+            tdPkg.appendChild(pkgPre);
             const tdIn = document.createElement("td");
             const kinds = [
               ["tools", "Tools"],
@@ -784,12 +832,59 @@
               tdIn.appendChild(b);
             }
             const tdAct = document.createElement("td");
+            const tog = document.createElement("button");
+            tog.type = "button";
+            tog.className = "small secondary";
+            tog.textContent = s.enabled ? "Disable" : "Enable";
+            tog.addEventListener("click", async () => {
+              const next = !s.enabled;
+              const body = { ...s, enabled: next };
+              const r = await apiFetch(api + "/" + encodeURIComponent(s.id), {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              const data = await r.json().catch(() => ({}));
+              if (!r.ok) {
+                alert(typeof data.detail === "string" ? data.detail : "Update failed: " + r.status);
+                return;
+              }
+              loadServers();
+            });
+            tdAct.appendChild(tog);
             const editBtn = document.createElement("button");
             editBtn.type = "button";
             editBtn.className = "small secondary";
             editBtn.textContent = "Edit";
             editBtn.addEventListener("click", () => openEdit(s));
             tdAct.appendChild(editBtn);
+            if (s.type === "stdio") {
+              const checkBtn = document.createElement("button");
+              checkBtn.type = "button";
+              checkBtn.className = "small secondary";
+              checkBtn.textContent = "Check update";
+              checkBtn.addEventListener("click", async () => {
+                pkgPre.textContent = "Checking…";
+                const st = await fetchStdioStatus(s.id);
+                if (!st.ok) {
+                  pkgPre.textContent = "Check failed: " + st.detail;
+                  return;
+                }
+                pkgPre.textContent = formatStdioStatus(st.data);
+              });
+              tdAct.appendChild(checkBtn);
+
+              const upBtn = document.createElement("button");
+              upBtn.type = "button";
+              upBtn.className = "small secondary";
+              upBtn.textContent = "Upgrade";
+              upBtn.addEventListener("click", async () => {
+                if (!confirm("Upgrade stdio server “" + s.id + "” to latest package version?")) return;
+                await upgradeStdioServer(s.id, pkgPre);
+                loadServers();
+              });
+              tdAct.appendChild(upBtn);
+            }
             const del = document.createElement("button");
             del.type = "button";
             del.className = "danger";
@@ -804,8 +899,17 @@
               loadServers();
             });
             tdAct.appendChild(del);
-            tr.append(tdId, tdDom, tdType, tdHttp, tdTgt, tdIn, tdAct);
+            tr.append(tdId, tdDom, tdType, tdHttp, tdTgt, tdPkg, tdIn, tdAct);
             tbody.appendChild(tr);
+            if (s.type === "stdio") {
+              fetchStdioStatus(s.id).then((st) => {
+                if (!st.ok) {
+                  pkgPre.textContent = "Check failed: " + st.detail;
+                  return;
+                }
+                pkgPre.textContent = formatStdioStatus(st.data);
+              });
+            }
           }
         }
 
