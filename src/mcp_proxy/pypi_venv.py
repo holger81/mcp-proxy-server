@@ -44,7 +44,18 @@ def validate_package_spec(spec: str) -> str:
         raise ValueError("invalid package spec")
     if "//" in s or s.startswith("-"):
         raise ValueError("invalid package spec")
-    for token in ("@ ", "git+", "file:", "path:", "http:", "https:", "$(", "`", "|", "&"):
+    for token in (
+        "@ ",
+        "git+",
+        "file:",
+        "path:",
+        "http:",
+        "https:",
+        "$(",
+        "`",
+        "|",
+        "&",
+    ):
         if token in s:
             raise ValueError("only plain PyPI names and versions are allowed")
     if not _PACKAGE_SPEC_RE.match(s):
@@ -60,6 +71,14 @@ def _bin_names(bin_dir: Path) -> set[str]:
 
 def _python_exe(venv: Path) -> Path:
     return venv / "bin" / "python"
+
+
+def _pick_console_script(candidates: list[str], dist_guess: str) -> str | None:
+    if not candidates:
+        return None
+    dg = dist_guess.replace("_", "-")
+    exact = next((s for s in candidates if s.replace("_", "-") == dg), None)
+    return exact or candidates[0]
 
 
 def ensure_venv(venv: Path) -> tuple[str, set[str]]:
@@ -83,7 +102,9 @@ def ensure_venv(venv: Path) -> tuple[str, set[str]]:
     if proc.stderr:
         log_parts.append(proc.stderr)
     if proc.returncode != 0:
-        raise RuntimeError("".join(log_parts) or f"venv creation failed ({proc.returncode})")
+        raise RuntimeError(
+            "".join(log_parts) or f"venv creation failed ({proc.returncode})"
+        )
     if not _python_exe(venv).is_file():
         raise RuntimeError("venv created but python binary missing")
     return "".join(log_parts), _bin_names(bin_dir)
@@ -122,7 +143,9 @@ class PypiInstallResult:
     suggested_command: str | None
 
 
-def install_into_venv(data_dir: Path, venv_id: str, package_spec: str) -> PypiInstallResult:
+def install_into_venv(
+    data_dir: Path, venv_id: str, package_spec: str
+) -> PypiInstallResult:
     vid = validate_slug_id(venv_id)
     spec = validate_package_spec(package_spec)
     root = venvs_root(data_dir).resolve()
@@ -148,6 +171,7 @@ def install_into_venv(data_dir: Path, venv_id: str, package_spec: str) -> PypiIn
     bin_dir = venv / "bin"
     after = _bin_names(bin_dir)
     new_scripts = sorted((after - baseline_names) - _VENV_NOISE)
+    all_scripts = sorted(after - _VENV_NOISE)
     name_part = spec.split("[")[0].strip()
     for sep in ("===", "==", ">=", "<=", "!=", "~=", ">", "<"):
         if sep in name_part:
@@ -155,10 +179,11 @@ def install_into_venv(data_dir: Path, venv_id: str, package_spec: str) -> PypiIn
             break
     dist_guess = name_part
     suggested: str | None = None
-    if new_scripts:
-        dg = dist_guess.replace("_", "-")
-        pick = next((s for s in new_scripts if s.replace("_", "-") == dg), None)
-        pick = pick or new_scripts[0]
+    pick = _pick_console_script(new_scripts, dist_guess)
+    if pick is None:
+        # Reinstalling an already-present package may add no *new* scripts.
+        pick = _pick_console_script(all_scripts, dist_guess)
+    if pick:
         suggested = str((bin_dir / pick).resolve())
 
     ok = code == 0

@@ -31,7 +31,9 @@ def validate_npm_package_spec(spec: str) -> str:
     if "//" in s or s.startswith("-") or ".." in s:
         raise ValueError("invalid npm package spec")
     if not _NPM_SPEC_RE.match(s):
-        raise ValueError("npm package spec has unsupported shape (use name or @scope/name, optional @version)")
+        raise ValueError(
+            "npm package spec has unsupported shape (use name or @scope/name, optional @version)"
+        )
     return s
 
 
@@ -54,6 +56,14 @@ def _guess_bin_stem(spec: str) -> str:
     return s.split("@", 1)[0]
 
 
+def _pick_bin(candidates: list[str], guess: str) -> str | None:
+    if not candidates:
+        return None
+    gg = guess.replace("_", "-")
+    exact = next((b for b in candidates if b.replace("_", "-") == gg), None)
+    return exact or candidates[0]
+
+
 @dataclass
 class NpmInstallResult:
     ok: bool
@@ -63,7 +73,9 @@ class NpmInstallResult:
     suggested_command: str | None
 
 
-def install_npm_prefix(data_dir: Path, slug: str, package_spec: str) -> NpmInstallResult:
+def install_npm_prefix(
+    data_dir: Path, slug: str, package_spec: str
+) -> NpmInstallResult:
     sid = validate_slug_id(slug)
     spec = validate_npm_package_spec(package_spec)
     root = npm_root(data_dir).resolve()
@@ -101,11 +113,14 @@ def install_npm_prefix(data_dir: Path, slug: str, package_spec: str) -> NpmInsta
 
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
+    all_bins = sorted(after - _NPM_NOISE)
     guess = _guess_bin_stem(spec).replace("_", "-")
     suggested: str | None = None
-    if new_bins:
-        pick = next((b for b in new_bins if b.replace("_", "-") == guess.replace("_", "-")), None)
-        pick = pick or new_bins[0]
+    pick = _pick_bin(new_bins, guess)
+    if pick is None:
+        # Reinstalling an already-present package may add no *new* binaries.
+        pick = _pick_bin(all_bins, guess)
+    if pick:
         p = (_bin_dir(target) / pick).resolve()
         suggested = str(p)
 
