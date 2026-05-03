@@ -18,6 +18,7 @@ from mcp_proxy.models import UpstreamServer, validate_slug_id
 from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.settings import Settings
+from mcp_proxy.tool_call_stats import ToolCallStatsStore
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
     remove_stdio_meta,
@@ -250,6 +251,80 @@ def _split_proxy_tool_name(name: str) -> tuple[str, str]:
     return sid, tool
 
 
+async def _lookup_tool_row(
+    store: ServerConfigStore,
+    settings: Settings,
+    composite: str,
+) -> dict[str, Any] | None:
+    """Resolve one discovery row for a composite tool name (for hot-tool list enrichment)."""
+    sid, _, rest = composite.partition("/")
+    orig = rest
+    if not sid.strip() or not orig.strip():
+        return None
+    sid = sid.strip()
+    orig = orig.strip()
+    if sid == _ADMIN_SERVER_ID:
+        for row in _admin_tool_rows():
+            if str(row.get("toolName", "")) == composite:
+                return _shape_tool_row_for_llm(dict(row), settings)
+        return None
+    upstream = store.get(sid)
+    if upstream is None or not upstream.enabled:
+        return None
+    try:
+        with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
+            tools = await _list_upstream_tools(upstream)
+    except Exception:
+        log.debug("lookup_tool_row: failed for %s", composite, exc_info=True)
+        return None
+    match = [t for t in tools if t.name == orig]
+    if not match:
+        return None
+    defs = _tool_defs_for_server(upstream, match[:1])
+    if not defs:
+        return None
+    return _shape_tool_row_for_llm(defs[0], settings)
+
+
+def _fallback_hot_tool(composite: str) -> mcp_types.Tool:
+    return mcp_types.Tool(
+        name=composite,
+        description=(
+            f"Popular shortcut for `{composite}` (same as callTool with this toolName). "
+            "Use searchToolsForDomain if you need the full input schema."
+        ),
+        inputSchema={"type": "object", "additionalProperties": True},
+    )
+
+
+def _hot_tool_from_row(row: dict[str, Any]) -> mcp_types.Tool:
+    composite = str(row.get("toolName", ""))
+    schema = row.get("inputSchema") or {"type": "object", "additionalProperties": True}
+    desc = str(row.get("description", "")).strip()
+    suffix = (
+        "Popular shortcut: listed because this composite tool was frequently invoked; "
+        "equivalent to callTool with this toolName."
+    )
+    full_desc = f"{desc}\n\n{suffix}" if desc else suffix
+    return mcp_types.Tool(name=composite, description=full_desc, inputSchema=schema)
+
+
+async def _build_session_tool_list(
+    store: ServerConfigStore,
+    domain_ids: list[str],
+    settings: Settings,
+    stats_store: ToolCallStatsStore,
+) -> list[mcp_types.Tool]:
+    tools = build_meta_tool_list(domain_ids)
+    for composite in stats_store.top_keys():
+        row = await _lookup_tool_row(store, settings, composite)
+        if row:
+            tools.append(_hot_tool_from_row(row))
+        else:
+            tools.append(_fallback_hot_tool(composite))
+    return tools
+
+
 async def _list_upstream_tools(server: UpstreamServer) -> list[mcp_types.Tool]:
     with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
         async with _upstream_streams(server) as (read_stream, write_stream):
@@ -407,6 +482,9 @@ def _base_instructions() -> str:
         "Use inputSchema to know required and optional parameters.\n"
         "4) Execute: call callTool with toolName exactly as returned (format `<server-id>/<upstream-tool-name>`) "
         "and arguments as a JSON object matching that schema.\n\n"
+        "The proxy also lists up to three frequently invoked composite tools at the session level (same names as "
+        "in discovery): you may call them directly with arguments shaped like the upstream inputSchema, or use "
+        "callTool as usual.\n\n"
         "Proxy management tools are exposed through the same discovery flow under domain "
         f"`{_ADMIN_DOMAIN_ID}` (serverId `{_ADMIN_SERVER_ID}`); discover with searchToolsForDomain/searchTool, "
         "then execute via callTool.\n\n"
@@ -553,6 +631,7 @@ def get_llm_preview_snapshot(
     store: ServerConfigStore,
     domain_store: DomainStore,
     settings: Settings | None = None,
+    stats_store: ToolCallStatsStore | None = None,
 ) -> dict[str, Any]:
     """Serializable view of what MCP clients receive for tools + instructions (admin preview)."""
     cfg = settings or Settings()
@@ -561,6 +640,9 @@ def get_llm_preview_snapshot(
         ids = {"default"}
     ids.add(_ADMIN_DOMAIN_ID)
     tools = build_meta_tool_list(ids)
+    if stats_store is not None:
+        for composite in stats_store.top_keys():
+            tools.append(_fallback_hot_tool(composite))
     tool_dicts = [
         t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools
     ]
@@ -568,7 +650,10 @@ def get_llm_preview_snapshot(
         "server": {
             "name": "mcp-proxy",
             "version": "0.1.0",
-            "role": "Aggregates upstream MCP servers; only the three meta-tools are listed at session level.",
+            "role": (
+                "Aggregates upstream MCP servers; lists discovery meta-tools plus up to three popular composite "
+                "shortcuts at session level."
+            ),
         },
         "instructions": full_instructions_for_store(store, cfg.instructions_max_chars),
         "tools": tool_dicts,
@@ -590,6 +675,7 @@ def build_proxy_mcp_server(
     store: ServerConfigStore,
     domain_store: DomainStore,
     settings: Settings,
+    stats_store: ToolCallStatsStore,
 ) -> Server:
     server = Server(
         "mcp-proxy",
@@ -611,13 +697,19 @@ def build_proxy_mcp_server(
         server.instructions = full_instructions_for_store(
             store, settings.instructions_max_chars
         )
-        return build_meta_tool_list(_domain_ids())
+        return await _build_session_tool_list(
+            store, _domain_ids(), settings, stats_store
+        )
 
     @server.call_tool()
     async def call_tool(
         name: str, arguments: dict | None
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
+        hot = frozenset(stats_store.top_keys())
+        if name in hot and "/" in name:
+            args = {"toolName": name, "arguments": args}
+            name = "callTool"
 
         if name == "searchToolsForDomain":
             dom = args.get("domain")
@@ -753,9 +845,12 @@ def build_proxy_mcp_server(
                         message="'arguments' must be a JSON object when provided.",
                     )
                 )
-            sid, orig = _split_proxy_tool_name(tool_name.strip())
+            composite_key = tool_name.strip()
+            sid, orig = _split_proxy_tool_name(composite_key)
             if sid == _ADMIN_SERVER_ID:
-                return await call_tool(orig, tool_args)
+                out = await call_tool(orig, tool_args)
+                stats_store.record_success(composite_key)
+                return out
             upstream = store.get(sid)
             if upstream is None or not upstream.enabled:
                 raise McpError(
@@ -796,6 +891,7 @@ def build_proxy_mcp_server(
                         message=str(e) or type(e).__name__,
                     )
                 ) from e
+            stats_store.record_success(composite_key)
             return _truncate_call_tool_content(
                 list(result.content or []),
                 settings.call_tool_response_text_max_chars,
@@ -1114,8 +1210,9 @@ def build_proxy_mcp_server(
             mcp_types.ErrorData(
                 code=mcp_types.METHOD_NOT_FOUND,
                 message=(
-                    f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool, listServers, "
-                    "setServerEnabled, registerStdioServer, upgradeStdioServer, or removeServer."
+                    f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool (or a listed popular "
+                    "composite shortcut), or admin tools such as listServers / setServerEnabled / "
+                    "registerStdioServer / upgradeStdioServer / removeServer."
                 ),
             )
         )
