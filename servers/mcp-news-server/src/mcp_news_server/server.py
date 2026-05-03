@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from mcp import types as mcp_types
@@ -12,19 +13,31 @@ from mcp.server import Server
 from mcp.shared.exceptions import McpError
 
 from mcp_news_server.dedupe import dedupe_news_items
-from mcp_news_server.fetchers import fetch_page_metadata, fetch_rss_via_http, safe_json_dumps, searx_search
+from mcp_news_server.digest_cache import DigestCache
+from mcp_news_server.feed_regions import feed_is_germany
+from mcp_news_server.fetchers import (
+    gather_rss_for_feeds,
+    fetch_page_metadata,
+    safe_json_dumps,
+    searx_search,
+)
 from mcp_news_server.http_util import async_client
 from mcp_news_server.models import NewsItem
 from mcp_news_server.store import FeedStore, default_data_dir
 
 _INSTRUCTIONS = """\
-This server curates world news from RSS feeds you configure, arbitrary article URLs (Open Graph / title), \
-and SearXNG JSON search. Use `news_list_feeds` to see RSS sources, `news_add_rss_feed` / `news_remove_rss_feed` \
-to curate them, `news_searx_search` for web search results, `news_ingest_urls` for one-off pages, and \
-`news_curate` to pull everything together. Responses merge sources and deduplicate by canonical URL and \
-(by default) by normalized headline to reduce syndicated duplicates. \
-Optional env: `SEARXNG_BASE_URL` (e.g. https://search.example.com), `NEWS_MCP_DATA_DIR` (feed list storage), \
-`NEWS_MCP_HTTP_TIMEOUT` (seconds, default 25).
+Pre-built digests (fast): `news_today` and `news_germany` return cached headlines refreshed automatically \
+every 10 minutes (override with `NEWS_MCP_CACHE_REFRESH_SECONDS`). Prefer these for routine questions.
+
+`news_curate` defaults to the same cached **today** digest unless you set `live_fetch`: true, \
+`digest_scope`: \"full\", include SearXNG queries/extra URLs, or disabled feeds — then it performs a live fetch.
+
+Other tools: `news_list_feeds`, `news_add_rss_feed`, `news_remove_rss_feed`, `news_searx_search`, \
+`news_ingest_urls`.
+
+Germany vs rest-of-world split uses feed labels (`[Germany]`) and known Germany RSS URLs. \
+Optional env: `SEARXNG_BASE_URL`, `NEWS_MCP_DATA_DIR`, `NEWS_MCP_HTTP_TIMEOUT`, \
+`NEWS_MCP_CACHE_REFRESH_SECONDS`, `NEWS_MCP_CACHE_MAX_TOTAL`, `NEWS_MCP_CACHE_MAX_PER_SOURCE`.
 """
 
 
@@ -92,12 +105,73 @@ def _optional_str(args: dict, key: str) -> str | None:
     return s or None
 
 
+def _digest_scope(args: dict) -> str:
+    raw = args.get("digest_scope")
+    if raw is None:
+        return "today"
+    if not isinstance(raw, str):
+        raise _err("'digest_scope' must be a string.")
+    s = raw.strip().lower()
+    if s in ("today", "germany", "full"):
+        return s
+    raise _err("'digest_scope' must be one of: today, germany, full.")
+
+
+def _wants_live_curate(args: dict) -> bool:
+    if _bool(args, "live_fetch", False):
+        return True
+    if _str_list(args, "searx_queries") or _str_list(args, "extra_urls"):
+        return True
+    if _bool(args, "include_disabled_feeds", False):
+        return True
+    if _digest_scope(args) == "full":
+        return True
+    return False
+
+
 def build_tool_list() -> list[mcp_types.Tool]:
     return [
         mcp_types.Tool(
             name="news_list_feeds",
             description="List configured RSS feed URLs (and labels) persisted under NEWS_MCP_DATA_DIR.",
             inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+        ),
+        mcp_types.Tool(
+            name="news_today",
+            description=(
+                "Fast path: latest cached digest for non-Germany feeds (world/US/regional outside the Germany "
+                "bucket). Updated automatically every ~10 minutes. Prefer this over live fetch unless the user "
+                "asks for freshly pulled RSS."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, refresh RSS now before responding (slower).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        mcp_types.Tool(
+            name="news_germany",
+            description=(
+                "Fast path: latest cached digest for Germany-labelled / Germany-focused feeds only. "
+                "Auto-refreshed on the same schedule as news_today."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, refresh RSS now before responding (slower).",
+                    },
+                },
+                "additionalProperties": False,
+            },
         ),
         mcp_types.Tool(
             name="news_add_rss_feed",
@@ -170,13 +244,26 @@ def build_tool_list() -> list[mcp_types.Tool]:
         mcp_types.Tool(
             name="news_curate",
             description=(
-                "Fetch enabled RSS feeds, optional SearXNG queries, and optional extra URLs; merge; "
-                "deduplicate; return newest-first headlines as JSON. Per-source errors are collected "
-                "without failing the whole batch."
+                "Merge RSS (and optionally SearXNG / extra URLs). By default returns the cached **today** digest "
+                "(same as news_today) without live HTTP. Set live_fetch true and/or digest_scope \"full\", or add "
+                "searx_queries / extra_urls / include_disabled_feeds for a fresh run."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "digest_scope": {
+                        "type": "string",
+                        "enum": ["today", "germany", "full"],
+                        "default": "today",
+                        "description": (
+                            "Which feed subset to use when live-fetching: today (non-DE feeds), germany, or full list."
+                        ),
+                    },
+                    "live_fetch": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, fetch RSS now instead of returning the cached digest (when applicable).",
+                    },
                     "max_per_source": {
                         "type": "integer",
                         "minimum": 1,
@@ -240,11 +327,23 @@ def build_tool_list() -> list[mcp_types.Tool]:
 
 def build_news_server() -> Server:
     store = FeedStore()
+    digest = DigestCache(store)
+
+    @asynccontextmanager
+    async def lifespan(_: Server):
+        task = asyncio.create_task(digest.run_periodic_refresh())
+        try:
+            yield {}
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
     server = Server(
         "mcp-news-server",
-        version="0.1.0",
+        version="0.2.0",
         instructions=_INSTRUCTIONS,
+        lifespan=lifespan,
     )
 
     @server.list_tools()
@@ -318,7 +417,25 @@ def build_news_server() -> Server:
             items = [x for x in results if x is not None]
             return _json_text({"items": [i.to_json_dict() for i in items], "errors": errors})
 
+        if name == "news_today":
+            if _bool(args, "force_refresh", False):
+                await digest.refresh_today()
+            return [mcp_types.TextContent(type="text", text=safe_json_dumps(digest.snapshot_today()))]
+
+        if name == "news_germany":
+            if _bool(args, "force_refresh", False):
+                await digest.refresh_germany()
+            return [mcp_types.TextContent(type="text", text=safe_json_dumps(digest.snapshot_germany()))]
+
         if name == "news_curate":
+            if not _wants_live_curate(args):
+                scope = _digest_scope(args)
+                if scope == "germany":
+                    snap = digest.snapshot_germany()
+                else:
+                    snap = digest.snapshot_today()
+                return [mcp_types.TextContent(type="text", text=safe_json_dumps(snap))]
+
             max_per = _int(args, "max_per_source", 20, min_v=1, max_v=100)
             max_total = _int(args, "max_total", 60, min_v=1, max_v=200)
             searx_queries = _str_list(args, "searx_queries")
@@ -331,29 +448,26 @@ def build_news_server() -> Server:
             min_fp = _int(args, "min_title_fingerprint_len", 24, min_v=8, max_v=200)
             searx_base = _optional_str(args, "searx_base_url") or _searx_base_from_env()
             searx_cat = _optional_str(args, "searx_categories")
+            scope = _digest_scope(args)
 
             feeds = store.load()
             if not include_disabled:
                 feeds = [f for f in feeds if f.enabled]
+            if scope == "today":
+                feeds = [f for f in feeds if not feed_is_germany(f)]
+            elif scope == "germany":
+                feeds = [f for f in feeds if feed_is_germany(f)]
 
             merged: list[NewsItem] = []
             errors: list[dict[str, str]] = []
 
             async with async_client() as client:
-
-                async def rss_one(f_url: str, label: str) -> None:
-                    try:
-                        got = await fetch_rss_via_http(
-                            client,
-                            f_url,
-                            feed_label=label,
-                            max_items=max_per,
-                        )
-                        merged.extend(got)
-                    except Exception as e:
-                        errors.append({"source": f_url, "error": str(e) or type(e).__name__})
-
-                await asyncio.gather(*(rss_one(f.url, f.label) for f in feeds))
+                merged = await gather_rss_for_feeds(
+                    client,
+                    feeds,
+                    max_per=max_per,
+                    errors=errors,
+                )
 
                 if searx_queries:
                     if not searx_base:
@@ -365,16 +479,15 @@ def build_news_server() -> Server:
                         )
                     else:
 
-                        async def sx_one(sq: str) -> None:
+                        async def sx_one(sq: str) -> list[NewsItem]:
                             try:
-                                got = await searx_search(
+                                return await searx_search(
                                     client,
                                     searx_base,
                                     sq,
                                     limit=max_per,
                                     categories=searx_cat,
                                 )
-                                merged.extend(got)
                             except Exception as e:
                                 errors.append(
                                     {
@@ -382,18 +495,23 @@ def build_news_server() -> Server:
                                         "error": str(e) or type(e).__name__,
                                     }
                                 )
+                                return []
 
-                        await asyncio.gather(*(sx_one(sq) for sq in searx_queries))
+                        sx_batches = await asyncio.gather(*(sx_one(sq) for sq in searx_queries))
+                        for batch in sx_batches:
+                            merged.extend(batch)
 
                 if extra_urls:
 
-                    async def web_one(u: str) -> None:
+                    async def web_one(u: str) -> NewsItem | None:
                         try:
-                            merged.append(await fetch_page_metadata(client, u))
+                            return await fetch_page_metadata(client, u)
                         except Exception as e:
                             errors.append({"source": u, "error": str(e) or type(e).__name__})
+                            return None
 
-                    await asyncio.gather(*(web_one(u) for u in extra_urls))
+                    web_results = await asyncio.gather(*(web_one(u) for u in extra_urls))
+                    merged.extend(w for w in web_results if w is not None)
 
             if dedupe:
                 merged = dedupe_news_items(
@@ -416,6 +534,8 @@ def build_news_server() -> Server:
                 "items": [i.to_json_dict() for i in merged],
                 "errors": errors,
                 "meta": {
+                    "digestScope": scope,
+                    "liveFetch": True,
                     "rssFeedsUsed": len(feeds),
                     "searxQueries": searx_queries,
                     "extraUrls": len(extra_urls),

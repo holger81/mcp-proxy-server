@@ -11,9 +11,37 @@ from typing import Any
 import feedparser
 import httpx
 
-from mcp_news_server.models import NewsItem
+from mcp_news_server.models import FeedEntry, NewsItem
 
 log = logging.getLogger(__name__)
+
+
+async def gather_rss_for_feeds(
+    client: httpx.AsyncClient,
+    feeds: list[FeedEntry],
+    *,
+    max_per: int,
+    errors: list[dict[str, str]],
+) -> list[NewsItem]:
+    """Concurrently fetch multiple feeds; errors are appended and do not abort other feeds."""
+
+    async def fetch_one(f: FeedEntry) -> list[NewsItem]:
+        try:
+            return await fetch_rss_via_http(
+                client,
+                f.url,
+                feed_label=f.label,
+                max_items=max_per,
+            )
+        except Exception as e:
+            errors.append({"source": f.url, "error": str(e) or type(e).__name__})
+            return []
+
+    batches = await asyncio.gather(*(fetch_one(f) for f in feeds))
+    merged: list[NewsItem] = []
+    for batch in batches:
+        merged.extend(batch)
+    return merged
 
 _HTML_TITLE_RE = re.compile(r"<title[^>]*>([^<]{1,500})</title>", re.I)
 

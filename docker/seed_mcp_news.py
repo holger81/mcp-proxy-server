@@ -26,10 +26,11 @@ NEWS_SERVER = {
     "type": "stdio",
     "display_name": "News curation (RSS, web, SearXNG)",
     "llm_context": (
-        "Curates headlines from configured RSS feeds, arbitrary article URLs (Open Graph / title), and optional "
-        "SearXNG search. Tools: news_list_feeds, news_add_rss_feed, news_remove_rss_feed, news_searx_search, "
-        "news_ingest_urls, news_curate. For a deduplicated multi-source briefing, call news_curate. "
-        "Feed list persists under NEWS_MCP_DATA_DIR (set below)."
+        "Fast digests (cached ~10 min): news_today (world/US/regional outside Germany bucket), news_germany "
+        "(DE-focused feeds). Prefer these for routine news questions. news_curate defaults to the same cached "
+        "today digest; use live_fetch true, digest_scope \"full\", searx_queries, or extra_urls for a fresh fetch. "
+        "Also: news_list_feeds, news_add_rss_feed, news_remove_rss_feed, news_searx_search, news_ingest_urls. "
+        "Feeds persist under NEWS_MCP_DATA_DIR."
     ),
     "command": ["mcp-news-server"],
     "cwd": None,
