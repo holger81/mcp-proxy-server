@@ -464,8 +464,12 @@ async def _collect_all_tool_defs(
             combined.extend(_tool_defs_for_server(s, tools))
         except TimeoutError:
             log.warning("collect tools: timeout for upstream %s", s.id)
-        except Exception:
-            log.exception("collect tools: skip upstream %s", s.id)
+        except Exception as e:
+            log.exception(
+                "collect tools: skip upstream %s (%s)",
+                s.id,
+                upstream_error_detail(e),
+            )
     return combined
 
 
