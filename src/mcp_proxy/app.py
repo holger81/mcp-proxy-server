@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -31,6 +33,35 @@ except ImportError:  # pragma: no cover
 
 _MIN_MCP = (1, 24, 0)
 _log = logging.getLogger("mcp_proxy.compat")
+_startup_log = logging.getLogger("mcp_proxy.startup")
+
+
+def _log_startup_versions() -> None:
+    """Log proxy package version and Node.js on PATH (used for stdio npm MCP servers)."""
+    try:
+        pv = version("mcp-proxy")
+    except PackageNotFoundError:
+        pv = "unknown"
+    _startup_log.info("MCP Proxy package version: %s", pv)
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        _startup_log.info(
+            "Node.js: not found on PATH (stdio npm MCP servers require Node in the container image)"
+        )
+        return
+    try:
+        proc = subprocess.run(
+            [node_bin, "-v"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        out = (proc.stdout or proc.stderr or "").strip()
+        _startup_log.info("Node.js: %s (executable: %s)", out or "no output", node_bin)
+    except Exception as e:
+        _startup_log.warning("Node.js: could not run %s -v: %s", node_bin, e)
 
 
 def _mcp_version_tuple(ver: str) -> tuple[int, int, int]:
@@ -105,6 +136,7 @@ async def lifespan(app: FastAPI):
     (settings.data_dir / "config").mkdir(parents=True, exist_ok=True)
     # Uvicorn configures logging after importing the app; re-attach so /mcp audit lines reach the ring buffer.
     attach_ring_logging()
+    _log_startup_versions()
     async with app.state.mcp_session_manager.run():
         yield
 
