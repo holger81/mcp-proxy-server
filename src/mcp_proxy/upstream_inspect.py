@@ -271,22 +271,22 @@ async def _upstream_streams(
             env=merged_env,
             cwd=server.cwd,
         )
-        if stdio_stderr_sink is not None:
-            if sys.platform == "win32":
+        # POSIX: always use piped stderr transport. Stock ``stdio_client`` only catches
+        # ``ClosedResourceError`` on send; ``BrokenResourceError`` during teardown (common when
+        # the child exits) becomes an ``ExceptionGroup`` and breaks tool discovery.
+        # Windows keeps the MCP SDK stdio client (pipes + tee not wired for capture here).
+        if sys.platform == "win32":
+            if stdio_stderr_sink is not None:
                 log.warning(
-                    "stdio stderr capture is only supported on POSIX; "
-                    "falling back to default stderr forwarding"
+                    "stdio stderr capture is only supported on POSIX; stderr buffer left empty",
                 )
                 stdio_stderr_sink[:] = []
-                async with stdio_client(params) as streams:
-                    yield streams
-                return
-
-            async with _stdio_client_piped_stderr_capture(params, stdio_stderr_sink) as streams:
+            async with stdio_client(params) as streams:
                 yield streams
             return
 
-        async with stdio_client(params) as streams:
+        stderr_bucket = stdio_stderr_sink if stdio_stderr_sink is not None else []
+        async with _stdio_client_piped_stderr_capture(params, stderr_bucket) as streams:
             yield streams
         return
 
