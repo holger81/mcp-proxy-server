@@ -185,7 +185,10 @@ async def _stdio_client_piped_stderr_capture(
                             continue
                         session_message = SessionMessage(message)
                         await read_stream_writer.send(session_message)
-        except anyio.ClosedResourceError:  # pragma: no cover
+        except (
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ):  # pragma: no cover
             await anyio.lowlevel.checkpoint()
 
     async def stdin_writer() -> None:
@@ -202,7 +205,10 @@ async def _stdio_client_piped_stderr_capture(
                             errors=params.encoding_error_handler,
                         )
                     )
-        except anyio.ClosedResourceError:  # pragma: no cover
+        except (
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ):  # pragma: no cover
             await anyio.lowlevel.checkpoint()
 
     async def stderr_reader() -> None:
@@ -217,7 +223,10 @@ async def _stdio_client_piped_stderr_capture(
                 capture.write(chunk)
                 sys.stderr.write(chunk)
                 sys.stderr.flush()
-        except anyio.ClosedResourceError:  # pragma: no cover
+        except (
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ):  # pragma: no cover
             await anyio.lowlevel.checkpoint()
         finally:
             stderr_sink[:] = [capture.getvalue()]
