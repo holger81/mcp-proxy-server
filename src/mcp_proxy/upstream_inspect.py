@@ -8,39 +8,33 @@ import logging
 import sys
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Literal
+from subprocess import PIPE
+from typing import Any, AsyncGenerator, Literal
 
+import anyio
+import anyio.lowlevel
 import httpx
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from anyio.streams.text import TextReceiveStream
 from mcp import types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
+from mcp.client.stdio import (
+    PROCESS_TERMINATION_TIMEOUT,
+    StdioServerParameters,
+    get_default_environment,
+    stdio_client,
+)
 from mcp.client.streamable_http import streamable_http_client
+from mcp.os.posix.utilities import terminate_posix_process_tree
 from mcp.shared._httpx_utils import create_mcp_http_client
+from mcp.shared.message import SessionMessage
 
 from mcp_proxy.models import UpstreamServer
 
 log = logging.getLogger(__name__)
 
 InspectKind = Literal["tools", "resources", "prompts", "capabilities"]
-
-
-class _TeeStderr:
-    """Writes child stderr both to captured buffer (for API errors) and process stderr."""
-
-    __slots__ = ("_capture",)
-
-    def __init__(self, capture: io.StringIO) -> None:
-        self._capture = capture
-
-    def write(self, s: str) -> int:
-        self._capture.write(s)
-        sys.stderr.write(s)
-        return len(s)
-
-    def flush(self) -> None:
-        self._capture.flush()
-        sys.stderr.flush()
 
 
 class _SimplePostUnsupported(Exception):
@@ -132,6 +126,128 @@ def format_upstream_stdio_error(
 
 
 @asynccontextmanager
+async def _stdio_client_piped_stderr_capture(
+    params: StdioServerParameters,
+    stderr_sink: list[str],
+) -> AsyncGenerator[tuple[Any, Any], None]:
+    """Spawn stdio MCP like ``mcp.client.stdio``, but stderr=PIPE → capture + tty copy.
+
+    ``anyio.open_process`` rejects file-like wrappers without ``fileno()``; Tee objects cannot satisfy
+    that. Mirrors ``stdio_client`` stderr handling semantics on POSIX only.
+    """
+    read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
+    write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
+
+    command = params.command
+
+    merged = (
+        {**get_default_environment(), **params.env}
+        if params.env is not None
+        else get_default_environment()
+    )
+
+    try:
+        process = await anyio.open_process(
+            [command, *params.args],
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
+            env=merged,
+            cwd=params.cwd,
+            start_new_session=True,
+        )
+    except OSError:
+        await read_stream.aclose()
+        await write_stream.aclose()
+        await read_stream_writer.aclose()
+        await write_stream_reader.aclose()
+        stderr_sink[:] = [""]
+        raise
+
+    async def stdout_reader() -> None:
+        assert process.stdout, "Opened process is missing stdout"
+        try:
+            async with read_stream_writer:
+                buffer = ""
+                async for chunk in TextReceiveStream(
+                    process.stdout,
+                    encoding=params.encoding,
+                    errors=params.encoding_error_handler,
+                ):
+                    lines = (buffer + chunk).split("\n")
+                    buffer = lines.pop()
+                    for line in lines:
+                        try:
+                            message = mcp_types.JSONRPCMessage.model_validate_json(line)
+                        except Exception as exc:  # pragma: no cover
+                            log.exception("Failed to parse JSONRPC message from upstream")
+                            await read_stream_writer.send(exc)
+                            continue
+                        session_message = SessionMessage(message)
+                        await read_stream_writer.send(session_message)
+        except anyio.ClosedResourceError:  # pragma: no cover
+            await anyio.lowlevel.checkpoint()
+
+    async def stdin_writer() -> None:
+        assert process.stdin, "Opened process is missing stdin"
+        try:
+            async with write_stream_reader:
+                async for session_message in write_stream_reader:
+                    json_rpc = session_message.message.model_dump_json(
+                        by_alias=True, exclude_none=True
+                    )
+                    await process.stdin.send(
+                        (json_rpc + "\n").encode(
+                            encoding=params.encoding,
+                            errors=params.encoding_error_handler,
+                        )
+                    )
+        except anyio.ClosedResourceError:  # pragma: no cover
+            await anyio.lowlevel.checkpoint()
+
+    async def stderr_reader() -> None:
+        capture = io.StringIO()
+        assert process.stderr, "Opened process is missing stderr"
+        try:
+            async for chunk in TextReceiveStream(
+                process.stderr,
+                encoding=params.encoding,
+                errors=params.encoding_error_handler,
+            ):
+                capture.write(chunk)
+                sys.stderr.write(chunk)
+                sys.stderr.flush()
+        except anyio.ClosedResourceError:  # pragma: no cover
+            await anyio.lowlevel.checkpoint()
+        finally:
+            stderr_sink[:] = [capture.getvalue()]
+
+    async with anyio.create_task_group() as tg, process:
+        tg.start_soon(stdout_reader)
+        tg.start_soon(stdin_writer)
+        tg.start_soon(stderr_reader)
+        try:
+            yield read_stream, write_stream
+        finally:
+            if process.stdin:  # pragma: no branch
+                try:
+                    await process.stdin.aclose()
+                except Exception:  # pragma: no cover
+                    pass
+            try:
+                with anyio.fail_after(PROCESS_TERMINATION_TIMEOUT):
+                    await process.wait()
+            except TimeoutError:
+                await terminate_posix_process_tree(process)
+            except ProcessLookupError:  # pragma: no cover
+                pass
+            await read_stream.aclose()
+            await write_stream.aclose()
+            await read_stream_writer.aclose()
+            await write_stream_reader.aclose()
+
+
+@asynccontextmanager
 async def _upstream_streams(
     server: UpstreamServer,
     *,
@@ -147,15 +263,22 @@ async def _upstream_streams(
             cwd=server.cwd,
         )
         if stdio_stderr_sink is not None:
-            stderr_buf = io.StringIO()
-            errlog: _TeeStderr | None = _TeeStderr(stderr_buf)
-        else:
-            stderr_buf = None
-            errlog = None
-        async with stdio_client(params, errlog=errlog or sys.stderr) as streams:
+            if sys.platform == "win32":
+                log.warning(
+                    "stdio stderr capture is only supported on POSIX; "
+                    "falling back to default stderr forwarding"
+                )
+                stdio_stderr_sink[:] = []
+                async with stdio_client(params) as streams:
+                    yield streams
+                return
+
+            async with _stdio_client_piped_stderr_capture(params, stdio_stderr_sink) as streams:
+                yield streams
+            return
+
+        async with stdio_client(params) as streams:
             yield streams
-        if stdio_stderr_sink is not None and stderr_buf is not None:
-            stdio_stderr_sink[:] = [stderr_buf.getvalue()]
         return
 
     assert server.url and server.http_transport
