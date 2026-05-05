@@ -24,7 +24,11 @@ from mcp_proxy.stdio_package_meta import (
     remove_stdio_meta,
     set_stdio_meta,
 )
-from mcp_proxy.upstream_inspect import _upstream_streams, upstream_error_detail
+from mcp_proxy.upstream_inspect import (
+    _upstream_streams,
+    format_upstream_stdio_error,
+    upstream_error_detail,
+)
 
 log = logging.getLogger(__name__)
 
@@ -867,9 +871,13 @@ def build_proxy_mcp_server(
                         message=f"Unknown or disabled upstream server {sid!r}",
                     )
                 )
+            stderr_accum: list[str] = []
             try:
                 with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-                    async with _upstream_streams(upstream) as (
+                    async with _upstream_streams(
+                        upstream,
+                        stdio_stderr_sink=stderr_accum,
+                    ) as (
                         read_stream,
                         write_stream,
                     ):
@@ -885,15 +893,23 @@ def build_proxy_mcp_server(
             except McpError:
                 raise
             except TimeoutError as e:
+                tail = stderr_accum[0].strip() if stderr_accum else ""
+                msg = f"Upstream {sid!r} timed out"
+                if tail:
+                    msg += (
+                        "\n\n--- stderr (upstream subprocess, possibly partial) ---\n"
+                        f"{tail[-8000:]}"
+                    )
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INTERNAL_ERROR,
-                        message=f"Upstream {sid!r} timed out",
+                        message=msg,
                     )
                 ) from e
             except Exception as e:
                 log.exception("callTool failed for %s", tool_name)
-                detail = upstream_error_detail(e)
+                stderr_txt = stderr_accum[0].strip() if stderr_accum else ""
+                detail = format_upstream_stdio_error(e, stderr_txt)
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INTERNAL_ERROR,

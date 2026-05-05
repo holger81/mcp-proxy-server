@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import logging
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Literal
@@ -17,7 +20,27 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 
 from mcp_proxy.models import UpstreamServer
 
+log = logging.getLogger(__name__)
+
 InspectKind = Literal["tools", "resources", "prompts", "capabilities"]
+
+
+class _TeeStderr:
+    """Writes child stderr both to captured buffer (for API errors) and process stderr."""
+
+    __slots__ = ("_capture",)
+
+    def __init__(self, capture: io.StringIO) -> None:
+        self._capture = capture
+
+    def write(self, s: str) -> int:
+        self._capture.write(s)
+        sys.stderr.write(s)
+        return len(s)
+
+    def flush(self) -> None:
+        self._capture.flush()
+        sys.stderr.flush()
 
 
 class _SimplePostUnsupported(Exception):
@@ -92,9 +115,27 @@ def upstream_error_detail(exc: BaseException, *, _seen: set[int] | None = None) 
     return result
 
 
+def format_upstream_stdio_error(
+    exc: BaseException,
+    stderr_text: str,
+    *,
+    stderr_max_chars: int = 12_000,
+) -> str:
+    """Combine flattened exception text with captured subprocess stderr (stdio upstreams)."""
+    base = upstream_error_detail(exc)
+    raw = stderr_text.strip()
+    if not raw:
+        return base
+    if len(raw) > stderr_max_chars:
+        raw = "… (stderr truncated) …\n" + raw[-stderr_max_chars:]
+    return f"{base}\n\n--- stderr (upstream subprocess) ---\n{raw}"
+
+
 @asynccontextmanager
 async def _upstream_streams(
     server: UpstreamServer,
+    *,
+    stdio_stderr_sink: list[str] | None = None,
 ) -> AsyncGenerator[tuple, None]:
     if server.type == "stdio":
         assert server.command and len(server.command) >= 1
@@ -105,8 +146,16 @@ async def _upstream_streams(
             env=merged_env,
             cwd=server.cwd,
         )
-        async with stdio_client(params) as streams:
+        if stdio_stderr_sink is not None:
+            stderr_buf = io.StringIO()
+            errlog: _TeeStderr | None = _TeeStderr(stderr_buf)
+        else:
+            stderr_buf = None
+            errlog = None
+        async with stdio_client(params, errlog=errlog or sys.stderr) as streams:
             yield streams
+        if stdio_stderr_sink is not None and stderr_buf is not None:
+            stdio_stderr_sink[:] = [stderr_buf.getvalue()]
         return
 
     assert server.url and server.http_transport
@@ -243,7 +292,12 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
     raise ValueError(f"unknown inspect kind: {kind}")
 
 
-async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
+async def run_inspect(
+    server: UpstreamServer,
+    kind: InspectKind,
+    *,
+    stdio_stderr_holder: list[str] | None = None,
+) -> dict:
     simple_post_exc: _SimplePostUnsupported | None = None
     if server.type == "http" and server.http_transport == "streamable-http":
         try:
@@ -251,8 +305,9 @@ async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
         except _SimplePostUnsupported as e:
             simple_post_exc = e
 
+    sink = stdio_stderr_holder if stdio_stderr_holder is not None else None
     try:
-        async with _upstream_streams(server) as (read_stream, write_stream):
+        async with _upstream_streams(server, stdio_stderr_sink=sink) as (read_stream, write_stream):
             async with ClientSession(
                 read_stream,
                 write_stream,
@@ -298,15 +353,35 @@ async def run_inspect(server: UpstreamServer, kind: InspectKind) -> dict:
                     }
                 raise ValueError(f"unknown inspect kind: {kind}")
     except Exception as e:
+        stderr_txt = ""
+        if stdio_stderr_holder:
+            stderr_txt = str(stdio_stderr_holder[0] or "").strip()
+        detail = format_upstream_stdio_error(e, stderr_txt)
+        log.warning(
+            "run_inspect failed (server_id=%r kind=%s transport=%s)",
+            server.id,
+            kind,
+            server.type + ((":" + server.http_transport) if server.http_transport else ""),
+            exc_info=e,
+        )
         if simple_post_exc is not None:
             raise RuntimeError(
-                f"{upstream_error_detail(e)} (simple JSON-RPC POST first: {simple_post_exc})"
-            ) from e
-        raise
+                f"{detail} (simple JSON-RPC POST first: {simple_post_exc})",
+            ) from None
+        raise RuntimeError(detail) from None
 
 
-async def run_inspect_with_timeout(server: UpstreamServer, kind: InspectKind, timeout: float = 60.0) -> dict:
+async def run_inspect_with_timeout(
+    server: UpstreamServer,
+    kind: InspectKind,
+    timeout: float = 60.0,
+    *,
+    stdio_stderr_holder: list[str] | None = None,
+) -> dict:
     try:
-        return await asyncio.wait_for(run_inspect(server, kind), timeout=timeout)
+        return await asyncio.wait_for(
+            run_inspect(server, kind, stdio_stderr_holder=stdio_stderr_holder),
+            timeout=timeout,
+        )
     except asyncio.TimeoutError as e:
         raise TimeoutError(f"upstream {server.id!r} did not respond within {timeout}s") from e

@@ -477,9 +477,23 @@ async def inspect_upstream(
         raise HTTPException(status_code=404, detail="server not found")
     if not server.enabled:
         raise HTTPException(status_code=400, detail="server is disabled")
+    stderr_cap: list[str] = []
     try:
-        return {"server_id": server_id, **await run_inspect_with_timeout(server, kind)}
+        payload = await run_inspect_with_timeout(
+            server, kind, stdio_stderr_holder=stderr_cap
+        )
+        return {"server_id": server_id, **payload}
     except TimeoutError as e:
-        raise HTTPException(status_code=504, detail=str(e)) from e
+        tail = stderr_cap[0].strip() if stderr_cap else ""
+        detail = str(e).strip()
+        if tail:
+            detail = (
+                f"{detail}\n\n--- stderr (upstream subprocess, possibly partial) ---\n"
+                f"{tail[-8000:]}"
+            )
+        raise HTTPException(status_code=504, detail=detail) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=upstream_error_detail(e)) from e
+        raise HTTPException(
+            status_code=502,
+            detail=str(e).strip() or upstream_error_detail(e),
+        ) from e
