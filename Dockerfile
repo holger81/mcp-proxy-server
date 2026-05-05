@@ -19,7 +19,7 @@ COPY docker ./docker
 RUN uv pip install --system . \
     && uv pip install --system ./servers/mcp-news-server
 
-# Debian's nodejs/npm are too old for many MCP packages (e.g. engines >=20). Use NodeSource 20.x LTS.
+# Debian's nodejs/npm are too old for many MCP packages. Use NodeSource 22.x LTS (some npm MCP servers require >=22).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -27,7 +27,7 @@ RUN apt-get update \
         curl \
         gosu \
         tzdata \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x -o /tmp/nodesource_setup.sh \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
     && bash /tmp/nodesource_setup.sh \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -f /tmp/nodesource_setup.sh \

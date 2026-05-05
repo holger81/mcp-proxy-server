@@ -24,7 +24,7 @@ from mcp_proxy.stdio_package_meta import (
     remove_stdio_meta,
     set_stdio_meta,
 )
-from mcp_proxy.upstream_inspect import _upstream_streams
+from mcp_proxy.upstream_inspect import _upstream_streams, upstream_error_detail
 
 log = logging.getLogger(__name__)
 
@@ -885,10 +885,11 @@ def build_proxy_mcp_server(
                 ) from e
             except Exception as e:
                 log.exception("callTool failed for %s", tool_name)
+                detail = upstream_error_detail(e)
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INTERNAL_ERROR,
-                        message=str(e) or type(e).__name__,
+                        message=detail or type(e).__name__,
                     )
                 ) from e
             stats_store.record_success(composite_key)
