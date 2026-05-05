@@ -277,7 +277,7 @@
         <input id="wiz-display" type="text" autocomplete="off" />
         <label for="wiz-llm">LLM / instructions for this server <span class="hint">(optional — merged into MCP instructions and search results)</span></label>
         <textarea id="wiz-llm" rows="5" placeholder="e.g. Prefer entity_id over friendly_name; HA is at http://…"></textarea>
-        <label for="wiz-env">Environment <span class="hint">(JSON — API keys, etc.)</span></label>
+        <label for="wiz-env">Environment <span class="hint">(JSON object; scalars only—see Edit form hint)</span></label>
         <textarea id="wiz-env" placeholder="{}">{}</textarea>
         <button type="button" id="wiz-go">Install and register</button>
         <pre id="wiz-log" class="hidden" style="margin-top: 0.75rem; max-height: 16rem; overflow: auto"></pre>
@@ -473,6 +473,10 @@
             <label for="e-cwd">Working directory (optional)</label>
             <input id="e-cwd" type="text" />
             <label for="e-env">Environment (JSON object, optional)</label>
+            <span class="hint"
+              >Scalars only. Use quoted strings for secrets. JSON <code>true</code>/<code>false</code> becomes
+              lowercase <code>true</code>/<code>false</code> in the process; <code>null</code> removes a key.</span
+            >
             <textarea id="e-env"></textarea>
           </fieldset>
 

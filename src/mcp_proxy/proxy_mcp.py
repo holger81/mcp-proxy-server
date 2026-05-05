@@ -14,7 +14,7 @@ from mcp.shared.exceptions import McpError
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
-from mcp_proxy.models import UpstreamServer, validate_slug_id
+from mcp_proxy.models import UpstreamServer, coerce_flat_os_env_mapping, validate_slug_id
 from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.settings import Settings
@@ -124,7 +124,15 @@ def _coerce_str_dict_arg(key: str, raw: object) -> dict[str, str]:
                 message=f"{key!r} must be an object of string key/value pairs.",
             )
         )
-    return {str(k): str(v) for k, v in raw.items()}
+    try:
+        return coerce_flat_os_env_mapping(raw, label=key)
+    except ValueError as e:
+        raise McpError(
+            mcp_types.ErrorData(
+                code=mcp_types.INVALID_PARAMS,
+                message=str(e) or "Invalid env mapping",
+            )
+        ) from e
 
 
 def _npm_package_name(spec: str) -> str:

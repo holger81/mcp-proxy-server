@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from mcp_proxy.config_store import ServerConfigStore
-from mcp_proxy.models import UpstreamServer, validate_slug_id
+from mcp_proxy.models import UpstreamServer, coerce_flat_os_env_mapping, validate_slug_id
 from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.stdio_package_meta import (
@@ -206,9 +206,7 @@ class RegisterStdioPackageBody(BaseModel):
     def env_obj(cls, v: Any) -> dict[str, str] | None:
         if v is None:
             return None
-        if not isinstance(v, dict):
-            raise TypeError("env must be a JSON object")
-        return {str(k): str(val) for k, val in v.items()}
+        return coerce_flat_os_env_mapping(v, label="env")
 
     @model_validator(mode="after")
     def validate_package(self) -> "RegisterStdioPackageBody":

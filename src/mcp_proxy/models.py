@@ -28,6 +28,35 @@ def _split_command(v: Any) -> list[str] | None:
     raise TypeError("command must be a string or list of strings")
 
 
+def coerce_flat_os_env_mapping(v: Any, *, label: str = "env") -> dict[str, str]:
+    """Normalize JSON key/value payloads into string-only maps for subprocess/OS env usage.
+
+    - JSON ``null`` drops the key (unset); do not pass the Python ``\"None\"`` string.
+    - JSON booleans become lowercase ``\"true\"`` / ``\"false\"`` (not Python ``\"True\"``).
+    - Numbers stringify in the usual decimal form.
+    - Nested objects/arrays are rejected (explicit rather than ``str(...)`` blobs).
+    """
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    out: dict[str, str] = {}
+    for k, val in v.items():
+        if val is None:
+            continue
+        key = str(k)
+        if isinstance(val, bool):
+            out[key] = "true" if val else "false"
+            continue
+        if isinstance(val, (dict, list)):
+            raise ValueError(
+                f"{label}: nested objects and arrays are not supported; values must be string, "
+                "number, boolean, or null"
+            )
+        out[key] = str(val)
+    return out
+
+
 HttpTransport = Literal["streamable-http", "sse"]
 
 
@@ -65,14 +94,15 @@ class UpstreamServer(BaseModel):
     cwd: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("headers", "env", mode="before")
+    @field_validator("headers", mode="before")
     @classmethod
-    def none_to_dict(cls, v: Any) -> dict[str, str]:
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise TypeError("headers and env must be objects")
-        return {str(k): str(val) for k, val in v.items()}
+    def coerce_headers_flat(cls, v: Any) -> dict[str, str]:
+        return coerce_flat_os_env_mapping(v, label="headers")
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def coerce_env_flat(cls, v: Any) -> dict[str, str]:
+        return coerce_flat_os_env_mapping(v, label="env")
 
     @field_validator("id")
     @classmethod
