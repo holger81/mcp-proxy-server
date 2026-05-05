@@ -80,7 +80,16 @@ def upstream_error_detail(exc: BaseException, *, _seen: set[int] | None = None) 
         if deep and deep not in top:
             return f"{top}: {deep}" if top else deep
 
-    return top or type(exc).__name__
+    result = top or type(exc).__name__
+    # anyio/asyncio: peer disconnected — almost always "stdio child exited before MCP initialize".
+    if type(exc).__name__ == "BrokenResourceError":
+        return (
+            "BrokenResourceError (upstream stdio process exited before MCP initialize). "
+            "Typical causes: missing/invalid startup config or env for that CLI, Node older than the "
+            "package engines field, or the subprocess crashed — run the same command line and env inside "
+            "the container to capture stderr."
+        )
+    return result
 
 
 @asynccontextmanager
