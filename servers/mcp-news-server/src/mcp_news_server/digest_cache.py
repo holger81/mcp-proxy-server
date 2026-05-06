@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_news_server.dedupe import dedupe_news_items
-from mcp_news_server.feed_regions import feeds_germany, feeds_today_world
+from mcp_news_server.feed_regions import feeds_bay_area, feeds_germany, feeds_today_world
 from mcp_news_server.fetchers import gather_rss_for_feeds
 from mcp_news_server.http_util import async_client
 from mcp_news_server.models import FeedEntry, NewsItem
@@ -62,6 +62,28 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _searx_base_from_env() -> str | None:
+    v = os.environ.get("SEARXNG_BASE_URL", "").strip()
+    return v or None
+
+
+def _local_searx_queries() -> list[str]:
+    raw = os.environ.get("NEWS_MCP_LOCAL_SEARX_QUERIES", "").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    for part in raw.split(";"):
+        s = part.strip().strip('"').strip("'").strip()
+        if s:
+            out.append(s)
+    return out[:5]
+
+
+def _local_searx_categories() -> str | None:
+    v = os.environ.get("NEWS_MCP_LOCAL_SEARX_CATEGORIES", "").strip()
+    return v or None
+
+
 class DigestCache:
     """Persists pre-merged 'today' and 'Germany' digests; refreshed on a timer."""
 
@@ -70,11 +92,13 @@ class DigestCache:
         self._dir = store.data_dir / "cache"
         self._today_path = self._dir / "today.json"
         self._germany_path = self._dir / "germany.json"
+        self._local_path = self._dir / "local.json"
         self._lock = asyncio.Lock()
         self._today_payload: dict[str, Any] = self._load_disk(self._today_path, "today")
         self._germany_payload: dict[str, Any] = self._load_disk(
             self._germany_path, "germany"
         )
+        self._local_payload: dict[str, Any] = self._load_disk(self._local_path, "local")
 
     def _load_disk(self, path: Path, digest: str) -> dict[str, Any]:
         if not path.is_file():
@@ -106,6 +130,9 @@ class DigestCache:
     def snapshot_germany(self) -> dict[str, Any]:
         return json.loads(json.dumps(self._germany_payload, default=str))
 
+    def snapshot_local(self) -> dict[str, Any]:
+        return json.loads(json.dumps(self._local_payload, default=str))
+
     async def refresh_today(self) -> None:
         async with self._lock:
             await self._refresh_today_unlocked()
@@ -114,10 +141,15 @@ class DigestCache:
         async with self._lock:
             await self._refresh_germany_unlocked()
 
-    async def refresh_both(self) -> None:
+    async def refresh_local(self) -> None:
+        async with self._lock:
+            await self._refresh_local_unlocked()
+
+    async def refresh_all(self) -> None:
         async with self._lock:
             await self._refresh_today_unlocked()
             await self._refresh_germany_unlocked()
+            await self._refresh_local_unlocked()
 
     async def _refresh_today_unlocked(self) -> None:
         feeds = feeds_today_world(self._store.load())
@@ -126,6 +158,10 @@ class DigestCache:
     async def _refresh_germany_unlocked(self) -> None:
         feeds = feeds_germany(self._store.load())
         self._germany_payload = await self._build_payload("germany", feeds)
+
+    async def _refresh_local_unlocked(self) -> None:
+        feeds = feeds_bay_area(self._store.load())
+        self._local_payload = await self._build_payload("local", feeds)
 
     async def _build_payload(
         self, digest: str, feeds: list[FeedEntry]
@@ -144,7 +180,7 @@ class DigestCache:
             )
             pl = _finalize_payload([], errors, digest, max_total, min_fp, feed_count=0)
             self._write_disk(
-                self._today_path if digest == "today" else self._germany_path,
+                _path_for_digest(self, digest),
                 pl,
             )
             return pl
@@ -157,11 +193,41 @@ class DigestCache:
                 errors=errors,
             )
 
+            if digest == "local":
+                base = _searx_base_from_env()
+                qs = _local_searx_queries()
+                if base and qs:
+                    from mcp_news_server.fetchers import searx_search
+
+                    cats = _local_searx_categories()
+
+                    async def one(q: str) -> list[NewsItem]:
+                        try:
+                            return await searx_search(
+                                client,
+                                base,
+                                q,
+                                limit=max_per,
+                                categories=cats,
+                            )
+                        except Exception as e:
+                            errors.append(
+                                {
+                                    "source": f"searx:{q}",
+                                    "error": str(e) or type(e).__name__,
+                                }
+                            )
+                            return []
+
+                    batches = await asyncio.gather(*(one(q) for q in qs))
+                    for b in batches:
+                        merged.extend(b)
+
         pl = _finalize_payload(
             merged, errors, digest, max_total, min_fp, feed_count=len(feeds)
         )
         self._write_disk(
-            self._today_path if digest == "today" else self._germany_path,
+            _path_for_digest(self, digest),
             pl,
         )
         return pl
@@ -170,12 +236,20 @@ class DigestCache:
         interval = _refresh_interval_s()
         while True:
             try:
-                await self.refresh_both()
+                await self.refresh_all()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("digest refresh failed")
             await asyncio.sleep(interval)
+
+
+def _path_for_digest(cache: DigestCache, digest: str) -> Path:
+    if digest == "today":
+        return cache._today_path
+    if digest == "germany":
+        return cache._germany_path
+    return cache._local_path
 
 
 def _finalize_payload(

@@ -185,6 +185,24 @@ def build_tool_list() -> list[mcp_types.Tool]:
             },
         ),
         mcp_types.Tool(
+            name="news_local",
+            description=(
+                "Fast path: one cached local digest (SF Bay Area + San Jose signals, optionally enriched via "
+                "SearXNG queries like Evergreen San Jose if configured). Auto-refreshed on the same schedule."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, refresh RSS now before responding (slower).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        mcp_types.Tool(
             name="news_add_rss_feed",
             description="Add an RSS or Atom feed URL to the curated list (idempotent by normalized URL).",
             inputSchema={
@@ -451,6 +469,15 @@ def build_news_server() -> Server:
             return [
                 mcp_types.TextContent(
                     type="text", text=safe_json_dumps(digest.snapshot_germany())
+                )
+            ]
+
+        if name == "news_local":
+            if _bool(args, "force_refresh", False):
+                await digest.refresh_local()
+            return [
+                mcp_types.TextContent(
+                    type="text", text=safe_json_dumps(digest.snapshot_local())
                 )
             ]
 
