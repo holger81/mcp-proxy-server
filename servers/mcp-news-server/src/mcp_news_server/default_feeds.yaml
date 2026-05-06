@@ -46,6 +46,9 @@ feeds:
   - url: "https://www.mercurynews.com/feed/"
     label: "[Bay Area] The Mercury News"
     enabled: true
+  - url: "https://sanjosespotlight.com/feed/"
+    label: "[San Jose] San José Spotlight"
+    enabled: true
   - url: "https://www.sfchronicle.com/bay-area/feed/"
     label: "[Bay Area] San Francisco Chronicle — Bay Area"
     enabled: true
