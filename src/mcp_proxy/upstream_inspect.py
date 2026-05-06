@@ -14,7 +14,6 @@ from typing import Any, AsyncGenerator, Literal
 import anyio
 import anyio.lowlevel
 import httpx
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from anyio.streams.text import TextReceiveStream
 from mcp import types as mcp_types
 from mcp.client.session import ClientSession
@@ -180,7 +179,9 @@ async def _stdio_client_piped_stderr_capture(
                         try:
                             message = mcp_types.JSONRPCMessage.model_validate_json(line)
                         except Exception as exc:  # pragma: no cover
-                            log.exception("Failed to parse JSONRPC message from upstream")
+                            log.exception(
+                                "Failed to parse JSONRPC message from upstream"
+                            )
                             await read_stream_writer.send(exc)
                             continue
                         session_message = SessionMessage(message)
@@ -298,13 +299,17 @@ async def _upstream_streams(
         return
 
     async with create_mcp_http_client(headers=headers) as http_client:
-        async with streamable_http_client(server.url, http_client=http_client) as transport:
+        async with streamable_http_client(
+            server.url, http_client=http_client
+        ) as transport:
             # mcp>=1.10 yields (read, write, get_session_id); older builds yield (read, write).
             read_stream, write_stream = transport[0], transport[1]
             yield read_stream, write_stream
 
 
-async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: InspectKind) -> dict:
+async def _run_inspect_simple_jsonrpc_post(
+    server: UpstreamServer, kind: InspectKind
+) -> dict:
     """One JSON-RPC POST per request (e.g. Home Assistant /api/mcp), multimodal mcpClient.js style.
 
     String UUID ids, application/json; no initialize before tools/list / resources/list / prompts/list.
@@ -377,7 +382,9 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
             init_model = mcp_types.InitializeResult.model_validate(init_result)
             return {
                 "kind": kind,
-                "initialize": init_model.model_dump(mode="json", by_alias=True, exclude_none=True),
+                "initialize": init_model.model_dump(
+                    mode="json", by_alias=True, exclude_none=True
+                ),
             }
 
         if kind == "tools":
@@ -387,7 +394,10 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
             ltr = mcp_types.ListToolsResult.model_validate(res)
             return {
                 "kind": kind,
-                "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in ltr.tools],
+                "tools": [
+                    t.model_dump(mode="json", by_alias=True, exclude_none=True)
+                    for t in ltr.tools
+                ],
             }
         if kind == "resources":
             try:
@@ -397,12 +407,15 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
                     return _empty_resources_payload()
                 raise
             if res is None:
-                raise _SimplePostUnsupported("resources/list returned an empty response")
+                raise _SimplePostUnsupported(
+                    "resources/list returned an empty response"
+                )
             lr = mcp_types.ListResourcesResult.model_validate(res)
             return {
                 "kind": kind,
                 "resources": [
-                    x.model_dump(mode="json", by_alias=True, exclude_none=True) for x in lr.resources
+                    x.model_dump(mode="json", by_alias=True, exclude_none=True)
+                    for x in lr.resources
                 ],
             }
         if kind == "prompts":
@@ -418,7 +431,8 @@ async def _run_inspect_simple_jsonrpc_post(server: UpstreamServer, kind: Inspect
             return {
                 "kind": kind,
                 "prompts": [
-                    x.model_dump(mode="json", by_alias=True, exclude_none=True) for x in lp.prompts
+                    x.model_dump(mode="json", by_alias=True, exclude_none=True)
+                    for x in lp.prompts
                 ],
             }
     raise ValueError(f"unknown inspect kind: {kind}")
@@ -439,23 +453,33 @@ async def run_inspect(
 
     sink = stdio_stderr_holder if stdio_stderr_holder is not None else None
     try:
-        async with _upstream_streams(server, stdio_stderr_sink=sink) as (read_stream, write_stream):
+        async with _upstream_streams(server, stdio_stderr_sink=sink) as (
+            read_stream,
+            write_stream,
+        ):
             async with ClientSession(
                 read_stream,
                 write_stream,
-                client_info=mcp_types.Implementation(name="mcp-proxy-admin", version="0.1.0"),
+                client_info=mcp_types.Implementation(
+                    name="mcp-proxy-admin", version="0.1.0"
+                ),
             ) as session:
                 init = await session.initialize()
                 if kind == "capabilities":
                     return {
                         "kind": kind,
-                        "initialize": init.model_dump(mode="json", by_alias=True, exclude_none=True),
+                        "initialize": init.model_dump(
+                            mode="json", by_alias=True, exclude_none=True
+                        ),
                     }
                 if kind == "tools":
                     result = await session.list_tools()
                     return {
                         "kind": kind,
-                        "tools": [t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in result.tools],
+                        "tools": [
+                            t.model_dump(mode="json", by_alias=True, exclude_none=True)
+                            for t in result.tools
+                        ],
                     }
                 if kind == "resources":
                     try:
@@ -467,7 +491,8 @@ async def run_inspect(
                     return {
                         "kind": kind,
                         "resources": [
-                            r.model_dump(mode="json", by_alias=True, exclude_none=True) for r in result.resources
+                            r.model_dump(mode="json", by_alias=True, exclude_none=True)
+                            for r in result.resources
                         ],
                     }
                 if kind == "prompts":
@@ -480,7 +505,8 @@ async def run_inspect(
                     return {
                         "kind": kind,
                         "prompts": [
-                            p.model_dump(mode="json", by_alias=True, exclude_none=True) for p in result.prompts
+                            p.model_dump(mode="json", by_alias=True, exclude_none=True)
+                            for p in result.prompts
                         ],
                     }
                 raise ValueError(f"unknown inspect kind: {kind}")
@@ -493,7 +519,8 @@ async def run_inspect(
             "run_inspect failed (server_id=%r kind=%s transport=%s)",
             server.id,
             kind,
-            server.type + ((":" + server.http_transport) if server.http_transport else ""),
+            server.type
+            + ((":" + server.http_transport) if server.http_transport else ""),
             exc_info=e,
         )
         if simple_post_exc is not None:
@@ -516,4 +543,6 @@ async def run_inspect_with_timeout(
             timeout=timeout,
         )
     except asyncio.TimeoutError as e:
-        raise TimeoutError(f"upstream {server.id!r} did not respond within {timeout}s") from e
+        raise TimeoutError(
+            f"upstream {server.id!r} did not respond within {timeout}s"
+        ) from e

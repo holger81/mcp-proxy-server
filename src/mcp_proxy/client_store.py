@@ -76,7 +76,9 @@ class ClientTokenStore:
         cid = validate_slug_id("c" + secrets.token_hex(8))
         plain = "mcp_" + secrets.token_urlsafe(32)
         digest = _token_digest(plain)
-        created = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        created = (
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
         record = ApiClientRecord(
             id=cid,
             label=label[:200],
@@ -98,6 +100,18 @@ class ClientTokenStore:
             return any(
                 secrets.compare_digest(digest, c.token_sha256_hex) for c in doc.clients
             )
+
+    def resolve_bearer(self, token: str) -> ApiClientRecord | None:
+        """Return the client record for a bearer token (hash match), if any."""
+        if not token:
+            return None
+        digest = _token_digest(token)
+        with self._lock:
+            doc = self._read()
+            for c in doc.clients:
+                if secrets.compare_digest(digest, c.token_sha256_hex):
+                    return c
+        return None
 
     def remove(self, client_id: str) -> bool:
         cid = validate_slug_id(client_id)

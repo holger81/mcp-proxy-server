@@ -72,7 +72,9 @@ class DigestCache:
         self._germany_path = self._dir / "germany.json"
         self._lock = asyncio.Lock()
         self._today_payload: dict[str, Any] = self._load_disk(self._today_path, "today")
-        self._germany_payload: dict[str, Any] = self._load_disk(self._germany_path, "germany")
+        self._germany_payload: dict[str, Any] = self._load_disk(
+            self._germany_path, "germany"
+        )
 
     def _load_disk(self, path: Path, digest: str) -> dict[str, Any]:
         if not path.is_file():
@@ -92,7 +94,10 @@ class DigestCache:
     def _write_disk(self, path: Path, payload: dict[str, Any]) -> None:
         self._dir.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
         tmp.replace(path)
 
     def snapshot_today(self) -> dict[str, Any]:
@@ -122,7 +127,9 @@ class DigestCache:
         feeds = feeds_germany(self._store.load())
         self._germany_payload = await self._build_payload("germany", feeds)
 
-    async def _build_payload(self, digest: str, feeds: list[FeedEntry]) -> dict[str, Any]:
+    async def _build_payload(
+        self, digest: str, feeds: list[FeedEntry]
+    ) -> dict[str, Any]:
         max_per = _cache_max_per()
         max_total = _cache_max_total()
         min_fp = _min_fp()
@@ -150,7 +157,9 @@ class DigestCache:
                 errors=errors,
             )
 
-        pl = _finalize_payload(merged, errors, digest, max_total, min_fp, feed_count=len(feeds))
+        pl = _finalize_payload(
+            merged, errors, digest, max_total, min_fp, feed_count=len(feeds)
+        )
         self._write_disk(
             self._today_path if digest == "today" else self._germany_path,
             pl,
@@ -215,4 +224,3 @@ def _empty_payload(digest: str, updated_at: str | None) -> dict[str, Any]:
             "deduplicated": True,
         },
     }
-

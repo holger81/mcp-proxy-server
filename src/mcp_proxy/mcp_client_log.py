@@ -41,7 +41,9 @@ class McpClientAuditMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or not _is_mcp_http_path(scope.get("path") or ""):
+        if scope.get("type") != "http" or not _is_mcp_http_path(
+            scope.get("path") or ""
+        ):
             await self.app(scope, receive, send)
             return
 

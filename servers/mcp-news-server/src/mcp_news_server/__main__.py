@@ -22,7 +22,11 @@ async def _run() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING,
+        stream=sys.stderr,
+        format="%(levelname)s %(name)s %(message)s",
+    )
     asyncio.run(_run())
 
 

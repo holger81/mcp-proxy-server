@@ -19,6 +19,8 @@ from mcp_proxy.api.routes import router as api_router
 from mcp_proxy.client_store import ClientTokenStore
 from mcp_proxy.log_buffer import attach_ring_logging
 from mcp_proxy.mcp_client_log import McpClientAuditMiddleware
+from mcp_proxy.live_mcp_tracker import LiveMcpTracker
+from mcp_proxy.mcp_live_tracker_middleware import McpLiveTrackerMiddleware
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
@@ -164,6 +166,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.domain_store = DomainStore(settings.data_dir)
     app.state.domain_store.ensure_default_domain()
     app.state.tool_call_stats_store = ToolCallStatsStore(settings.data_dir)
+    app.state.live_mcp_tracker = LiveMcpTracker()
 
     if StreamableHTTPSessionManager is None:
         raise RuntimeError(
@@ -174,6 +177,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.domain_store,
         settings,
         app.state.tool_call_stats_store,
+        live_tracker=app.state.live_mcp_tracker,
     )
     app.state.mcp_session_manager = StreamableHTTPSessionManager(
         mcp_sdk_server,
@@ -207,6 +211,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["mcp-session-id", "mcp-protocol-version", "last-event-id"],
     )
     # Outermost: CORS, then richer /mcp lines (UA, session prefix, Origin, X-Forwarded-For).
+    app.add_middleware(
+        McpLiveTrackerMiddleware,
+        tracker=app.state.live_mcp_tracker,
+        client_store=app.state.client_store,
+    )
     app.add_middleware(McpClientAuditMiddleware)
 
     app.include_router(api_router, prefix="/api")

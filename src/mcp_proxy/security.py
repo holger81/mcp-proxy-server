@@ -24,7 +24,11 @@ def _should_redirect_browser_to_login(request: Request) -> bool:
     accept = (request.headers.get("accept") or "").lower()
     if "text/html" in accept or "application/xhtml+xml" in accept:
         return True
-    if "application/json" in accept and "text/html" not in accept and "application/xhtml+xml" not in accept:
+    if (
+        "application/json" in accept
+        and "text/html" not in accept
+        and "application/xhtml+xml" not in accept
+    ):
         return False
     return True
 

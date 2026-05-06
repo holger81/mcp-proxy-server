@@ -63,14 +63,19 @@ HttpTransport = Literal["streamable-http", "sse"]
 class UpstreamServer(BaseModel):
     """One MCP upstream definition persisted under /data/config/servers.json."""
 
-    id: Annotated[str, Field(min_length=1, max_length=63, description="Stable slug, e.g. my-fetch")]
+    id: Annotated[
+        str,
+        Field(min_length=1, max_length=63, description="Stable slug, e.g. my-fetch"),
+    ]
     domain: str = Field(
         default="default",
         description="Logical domain id (from admin Domains tab) for MCP searchToolsForDomain / enums.",
     )
     enabled: bool = True
     type: Literal["stdio", "http"]
-    display_name: str | None = Field(default=None, description="Optional label in admin UI")
+    display_name: str | None = Field(
+        default=None, description="Optional label in admin UI"
+    )
     llm_context: str = Field(
         default="",
         max_length=12000,
@@ -145,7 +150,9 @@ class UpstreamServer(BaseModel):
                 self.http_transport = "streamable-http"
         else:
             if not self.command:
-                raise ValueError("command is required for stdio servers (non-empty argv)")
+                raise ValueError(
+                    "command is required for stdio servers (non-empty argv)"
+                )
             self.url = None
             self.headers = {}
             self.http_transport = None

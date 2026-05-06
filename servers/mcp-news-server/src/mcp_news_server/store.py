@@ -55,7 +55,10 @@ class FeedStore:
                 {"url": f.url, "label": f.label, "enabled": f.enabled} for f in feeds
             ]
         }
-        self._path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        self._path.write_text(
+            yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def add(self, url: str, label: str = "") -> list[FeedEntry]:
         feeds = self.load()

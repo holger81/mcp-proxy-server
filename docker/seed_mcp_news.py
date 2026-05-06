@@ -28,7 +28,7 @@ NEWS_SERVER = {
     "llm_context": (
         "Fast digests (cached ~10 min): news_today (world/US/regional outside Germany bucket), news_germany "
         "(DE-focused feeds). Prefer these for routine news questions. news_curate defaults to the same cached "
-        "today digest; use live_fetch true, digest_scope \"full\", searx_queries, or extra_urls for a fresh fetch. "
+        'today digest; use live_fetch true, digest_scope "full", searx_queries, or extra_urls for a fresh fetch. '
         "Also: news_list_feeds, news_add_rss_feed, news_remove_rss_feed, news_searx_search, news_ingest_urls. "
         "Feeds persist under NEWS_MCP_DATA_DIR."
     ),
@@ -50,7 +50,9 @@ def _load_json(path: Path, default):
 def _atomic_write_json(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     tmp.replace(path)
 
 

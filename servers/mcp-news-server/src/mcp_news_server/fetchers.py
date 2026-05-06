@@ -43,6 +43,7 @@ async def gather_rss_for_feeds(
         merged.extend(batch)
     return merged
 
+
 _HTML_TITLE_RE = re.compile(r"<title[^>]*>([^<]{1,500})</title>", re.I)
 
 
@@ -88,7 +89,11 @@ async def fetch_rss_via_http(
     def _load_and_parse(content: bytes) -> list[NewsItem]:
         parsed = feedparser.parse(content)
         if getattr(parsed, "bozo", False) and not getattr(parsed, "entries", None):
-            log.warning("RSS parse issue for %s: %s", feed_url, getattr(parsed, "bozo_exception", ""))
+            log.warning(
+                "RSS parse issue for %s: %s",
+                feed_url,
+                getattr(parsed, "bozo_exception", ""),
+            )
         title_fn = getattr(parsed.feed, "title", "") or feed_label or feed_url
         out: list[NewsItem] = []
         for ent in (parsed.entries or [])[:max_items]:
@@ -96,7 +101,9 @@ async def fetch_rss_via_http(
             if not link:
                 continue
             raw_title = (getattr(ent, "title", None) or "").strip() or link
-            summary = (getattr(ent, "summary", None) or getattr(ent, "description", None) or "").strip() or None
+            summary = (
+                getattr(ent, "summary", None) or getattr(ent, "description", None) or ""
+            ).strip() or None
             published = None
             if getattr(ent, "published_parsed", None):
                 published = _iso_from_struct(ent.published_parsed)
@@ -227,4 +234,3 @@ async def searx_search(
 
 def safe_json_dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
-

@@ -13,8 +13,12 @@ from mcp_proxy.models import validate_slug_id
 
 
 class DomainRecord(BaseModel):
-    id: str = Field(min_length=1, max_length=63, description="Unique slug, e.g. smart-home")
-    label: str = Field(min_length=1, max_length=120, description="Human label for dropdowns")
+    id: str = Field(
+        min_length=1, max_length=63, description="Unique slug, e.g. smart-home"
+    )
+    label: str = Field(
+        min_length=1, max_length=120, description="Human label for dropdowns"
+    )
 
     @field_validator("id")
     @classmethod

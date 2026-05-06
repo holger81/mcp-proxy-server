@@ -47,14 +47,21 @@ def _searx_base_from_env() -> str | None:
 
 
 def _json_text(payload: Any) -> list[mcp_types.ContentBlock]:
-    return [mcp_types.TextContent(type="text", text=json.dumps(payload, indent=2, ensure_ascii=False, default=str))]
+    return [
+        mcp_types.TextContent(
+            type="text",
+            text=json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+        )
+    ]
 
 
 def _err(message: str) -> McpError:
     return McpError(mcp_types.ErrorData(code=mcp_types.INVALID_PARAMS, message=message))
 
 
-def _int(args: dict, key: str, default: int, *, min_v: int = 1, max_v: int = 500) -> int:
+def _int(
+    args: dict, key: str, default: int, *, min_v: int = 1, max_v: int = 500
+) -> int:
     if key not in args or args[key] is None:
         return default
     try:
@@ -134,7 +141,11 @@ def build_tool_list() -> list[mcp_types.Tool]:
         mcp_types.Tool(
             name="news_list_feeds",
             description="List configured RSS feed URLs (and labels) persisted under NEWS_MCP_DATA_DIR.",
-            inputSchema={"type": "object", "properties": {}, "additionalProperties": False},
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
         ),
         mcp_types.Tool(
             name="news_today",
@@ -245,7 +256,7 @@ def build_tool_list() -> list[mcp_types.Tool]:
             name="news_curate",
             description=(
                 "Merge RSS (and optionally SearXNG / extra URLs). By default returns the cached **today** digest "
-                "(same as news_today) without live HTTP. Set live_fetch true and/or digest_scope \"full\", or add "
+                '(same as news_today) without live HTTP. Set live_fetch true and/or digest_scope "full", or add '
                 "searx_queries / extra_urls / include_disabled_feeds for a fresh run."
             ),
             inputSchema={
@@ -351,7 +362,9 @@ def build_news_server() -> Server:
         return build_tool_list()
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict | None) -> list[mcp_types.ContentBlock]:
+    async def call_tool(
+        name: str, arguments: dict | None
+    ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
 
         if name == "news_list_feeds":
@@ -387,12 +400,16 @@ def build_news_server() -> Server:
             categories = _optional_str(args, "categories")
             base = _optional_str(args, "searx_base_url") or _searx_base_from_env()
             if not base:
-                raise _err("Set `searx_base_url` or environment variable `SEARXNG_BASE_URL`.")
+                raise _err(
+                    "Set `searx_base_url` or environment variable `SEARXNG_BASE_URL`."
+                )
             async with async_client() as client:
                 items = await searx_search(
                     client, base, q.strip(), limit=limit, categories=categories
                 )
-            return _json_text({"query": q.strip(), "items": [i.to_json_dict() for i in items]})
+            return _json_text(
+                {"query": q.strip(), "items": [i.to_json_dict() for i in items]}
+            )
 
         if name == "news_ingest_urls":
             urls = _str_list(args, "urls")
@@ -415,17 +432,27 @@ def build_news_server() -> Server:
                 results = await asyncio.gather(*(one(u) for u in urls))
 
             items = [x for x in results if x is not None]
-            return _json_text({"items": [i.to_json_dict() for i in items], "errors": errors})
+            return _json_text(
+                {"items": [i.to_json_dict() for i in items], "errors": errors}
+            )
 
         if name == "news_today":
             if _bool(args, "force_refresh", False):
                 await digest.refresh_today()
-            return [mcp_types.TextContent(type="text", text=safe_json_dumps(digest.snapshot_today()))]
+            return [
+                mcp_types.TextContent(
+                    type="text", text=safe_json_dumps(digest.snapshot_today())
+                )
+            ]
 
         if name == "news_germany":
             if _bool(args, "force_refresh", False):
                 await digest.refresh_germany()
-            return [mcp_types.TextContent(type="text", text=safe_json_dumps(digest.snapshot_germany()))]
+            return [
+                mcp_types.TextContent(
+                    type="text", text=safe_json_dumps(digest.snapshot_germany())
+                )
+            ]
 
         if name == "news_curate":
             if not _wants_live_curate(args):
@@ -497,7 +524,9 @@ def build_news_server() -> Server:
                                 )
                                 return []
 
-                        sx_batches = await asyncio.gather(*(sx_one(sq) for sq in searx_queries))
+                        sx_batches = await asyncio.gather(
+                            *(sx_one(sq) for sq in searx_queries)
+                        )
                         for batch in sx_batches:
                             merged.extend(batch)
 
@@ -507,10 +536,14 @@ def build_news_server() -> Server:
                         try:
                             return await fetch_page_metadata(client, u)
                         except Exception as e:
-                            errors.append({"source": u, "error": str(e) or type(e).__name__})
+                            errors.append(
+                                {"source": u, "error": str(e) or type(e).__name__}
+                            )
                             return None
 
-                    web_results = await asyncio.gather(*(web_one(u) for u in extra_urls))
+                    web_results = await asyncio.gather(
+                        *(web_one(u) for u in extra_urls)
+                    )
                     merged.extend(w for w in web_results if w is not None)
 
             if dedupe:
@@ -522,9 +555,11 @@ def build_news_server() -> Server:
                 )
             else:
                 merged.sort(
-                    key=lambda it: (0, (it.published or "").strip())
-                    if (it.published or "").strip()
-                    else (1, ""),
+                    key=lambda it: (
+                        (0, (it.published or "").strip())
+                        if (it.published or "").strip()
+                        else (1, "")
+                    ),
                     reverse=True,
                 )
 

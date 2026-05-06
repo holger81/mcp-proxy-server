@@ -14,11 +14,16 @@ from mcp.shared.exceptions import McpError
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
-from mcp_proxy.models import UpstreamServer, coerce_flat_os_env_mapping, validate_slug_id
+from mcp_proxy.models import (
+    UpstreamServer,
+    coerce_flat_os_env_mapping,
+    validate_slug_id,
+)
 from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
+from mcp_proxy.live_mcp_tracker import LiveMcpTracker, current_mcp_session_id
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
     remove_stdio_meta,
@@ -692,6 +697,8 @@ def build_proxy_mcp_server(
     domain_store: DomainStore,
     settings: Settings,
     stats_store: ToolCallStatsStore,
+    *,
+    live_tracker: LiveMcpTracker | None = None,
 ) -> Server:
     server = Server(
         "mcp-proxy",
@@ -862,69 +869,83 @@ def build_proxy_mcp_server(
                     )
                 )
             composite_key = tool_name.strip()
-            sid, orig = _split_proxy_tool_name(composite_key)
-            if sid == _ADMIN_SERVER_ID:
-                out = await call_tool(orig, tool_args)
-                stats_store.record_success(composite_key)
-                return out
-            upstream = store.get(sid)
-            if upstream is None or not upstream.enabled:
-                raise McpError(
-                    mcp_types.ErrorData(
-                        code=mcp_types.INVALID_PARAMS,
-                        message=f"Unknown or disabled upstream server {sid!r}",
-                    )
+            live_sess = current_mcp_session_id.get()
+            live_call_id: str | None = None
+            if live_tracker is not None and live_sess:
+                live_call_id = await live_tracker.begin_tool_call(
+                    session_id=live_sess,
+                    tool_name=composite_key,
+                    arguments=tool_args if isinstance(tool_args, dict) else None,
                 )
-            stderr_accum: list[str] = []
+            sid, orig = _split_proxy_tool_name(composite_key)
             try:
-                with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-                    async with _upstream_streams(
-                        upstream,
-                        stdio_stderr_sink=stderr_accum,
-                    ) as (
-                        read_stream,
-                        write_stream,
-                    ):
-                        async with ClientSession(
+                if sid == _ADMIN_SERVER_ID:
+                    out = await call_tool(orig, tool_args)
+                    stats_store.record_success(composite_key)
+                    return out
+                upstream = store.get(sid)
+                if upstream is None or not upstream.enabled:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message=f"Unknown or disabled upstream server {sid!r}",
+                        )
+                    )
+                stderr_accum: list[str] = []
+                try:
+                    with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
+                        async with _upstream_streams(
+                            upstream,
+                            stdio_stderr_sink=stderr_accum,
+                        ) as (
                             read_stream,
                             write_stream,
-                            client_info=mcp_types.Implementation(
-                                name="mcp-proxy", version="0.1.0"
-                            ),
-                        ) as session:
-                            await session.initialize()
-                            result = await session.call_tool(orig, tool_args)
-            except McpError:
-                raise
-            except TimeoutError as e:
-                tail = stderr_accum[0].strip() if stderr_accum else ""
-                msg = f"Upstream {sid!r} timed out"
-                if tail:
-                    msg += (
-                        "\n\n--- stderr (upstream subprocess, possibly partial) ---\n"
-                        f"{tail[-8000:]}"
+                        ):
+                            async with ClientSession(
+                                read_stream,
+                                write_stream,
+                                client_info=mcp_types.Implementation(
+                                    name="mcp-proxy", version="0.1.0"
+                                ),
+                            ) as session:
+                                await session.initialize()
+                                result = await session.call_tool(orig, tool_args)
+                except McpError:
+                    raise
+                except TimeoutError as e:
+                    tail = stderr_accum[0].strip() if stderr_accum else ""
+                    msg = f"Upstream {sid!r} timed out"
+                    if tail:
+                        msg += (
+                            "\n\n--- stderr (upstream subprocess, possibly partial) ---\n"
+                            f"{tail[-8000:]}"
+                        )
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INTERNAL_ERROR,
+                            message=msg,
+                        )
+                    ) from e
+                except Exception as e:
+                    log.exception("callTool failed for %s", tool_name)
+                    stderr_txt = stderr_accum[0].strip() if stderr_accum else ""
+                    detail = format_upstream_stdio_error(e, stderr_txt)
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INTERNAL_ERROR,
+                            message=detail or type(e).__name__,
+                        )
+                    ) from e
+                stats_store.record_success(composite_key)
+                return _truncate_call_tool_content(
+                    list(result.content or []),
+                    settings.call_tool_response_text_max_chars,
+                )
+            finally:
+                if live_tracker is not None and live_sess and live_call_id is not None:
+                    await live_tracker.end_tool_call(
+                        session_id=live_sess, call_id=live_call_id
                     )
-                raise McpError(
-                    mcp_types.ErrorData(
-                        code=mcp_types.INTERNAL_ERROR,
-                        message=msg,
-                    )
-                ) from e
-            except Exception as e:
-                log.exception("callTool failed for %s", tool_name)
-                stderr_txt = stderr_accum[0].strip() if stderr_accum else ""
-                detail = format_upstream_stdio_error(e, stderr_txt)
-                raise McpError(
-                    mcp_types.ErrorData(
-                        code=mcp_types.INTERNAL_ERROR,
-                        message=detail or type(e).__name__,
-                    )
-                ) from e
-            stats_store.record_success(composite_key)
-            return _truncate_call_tool_content(
-                list(result.content or []),
-                settings.call_tool_response_text_max_chars,
-            )
 
         if name == "listServers":
             rows: list[dict[str, Any]] = []

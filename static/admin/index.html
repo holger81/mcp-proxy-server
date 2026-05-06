@@ -249,6 +249,7 @@
       <button type="button" class="tab active" data-tab="register" role="tab" aria-selected="true">Register server</button>
       <button type="button" class="tab" data-tab="explore" role="tab" aria-selected="false">Explore servers</button>
       <button type="button" class="tab" data-tab="clients" role="tab" aria-selected="false">API clients</button>
+      <button type="button" class="tab" data-tab="live" role="tab" aria-selected="false">Live clients</button>
       <button type="button" class="tab" data-tab="domains" role="tab" aria-selected="false">Domains</button>
       <button type="button" class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
       <button type="button" class="tab" data-tab="llm" role="tab" aria-selected="false">LLM preview</button>
@@ -378,6 +379,31 @@
         <tbody id="clients-body"></tbody>
       </table>
       <p id="clients-empty" class="hint">No clients yet.</p>
+    </section>
+
+    <section id="panel-live" class="hidden" role="tabpanel">
+      <h2>Live MCP clients</h2>
+      <p class="hint">
+        Best-effort view of recent <code>/mcp</code> sessions and currently running <code>callTool</code> executions.
+        “Connected” means we saw traffic within the last ~90s (configurable in the API).
+      </p>
+      <button type="button" class="secondary small" id="live-refresh" style="margin-top: 0.5rem">Refresh</button>
+      <label for="live-window" class="hint" style="display: inline-block; margin-left: 0.75rem">Window (s)</label>
+      <input id="live-window" type="number" min="5" max="3600" value="90" style="width: 5rem; display: inline-block; margin-left: 0.35rem" />
+      <div id="live-msg"></div>
+      <table id="live-table" class="hidden" style="margin-top: 0.5rem">
+        <thead>
+          <tr>
+            <th>Session</th>
+            <th>Client</th>
+            <th>Peer</th>
+            <th>Idle</th>
+            <th>Running tools</th>
+          </tr>
+        </thead>
+        <tbody id="live-body"></tbody>
+      </table>
+      <p id="live-empty" class="hint">Open this tab to load.</p>
     </section>
 
     <section id="panel-domains" class="hidden" role="tabpanel">
@@ -523,6 +549,7 @@
         const apiDomains = "/api/domains";
         const apiLogs = "/api/logs";
         const apiLlmPreview = "/api/mcp-llm-preview";
+        const apiLive = "/api/mcp-live";
 
         let cachedDomains = [];
 
@@ -572,9 +599,107 @@
         const panelReg = document.getElementById("panel-register");
         const panelExp = document.getElementById("panel-explore");
         const panelClients = document.getElementById("panel-clients");
+        const panelLive = document.getElementById("panel-live");
         const panelDomains = document.getElementById("panel-domains");
         const panelLogs = document.getElementById("panel-logs");
         const panelLlm = document.getElementById("panel-llm");
+        const liveBody = document.getElementById("live-body");
+        const liveTable = document.getElementById("live-table");
+        const liveEmpty = document.getElementById("live-empty");
+        const liveMsg = document.getElementById("live-msg");
+
+        let livePollId = null;
+        const LIVE_POLL_MS = 2500;
+
+        function stopLivePolling() {
+          if (livePollId != null) {
+            clearInterval(livePollId);
+            livePollId = null;
+          }
+        }
+
+        function startLivePolling() {
+          stopLivePolling();
+          livePollId = setInterval(() => {
+            if (!panelLive.classList.contains("hidden")) {
+              loadLive({ silent: true });
+            }
+          }, LIVE_POLL_MS);
+        }
+
+        function fmtMs(ms) {
+          ms = Math.max(0, Number(ms) || 0);
+          if (ms < 1000) return ms + "ms";
+          const s = Math.floor(ms / 1000);
+          if (s < 60) return s + "s";
+          const m = Math.floor(s / 60);
+          if (m < 60) return m + "m";
+          const h = Math.floor(m / 60);
+          return h + "h";
+        }
+
+        async function loadLive(opts) {
+          opts = opts || {};
+          const silent = opts.silent === true;
+          liveMsg.innerHTML = "";
+          if (!silent) {
+            liveEmpty.classList.remove("hidden");
+            liveEmpty.textContent = "Loading…";
+            liveTable.classList.add("hidden");
+          }
+          let winS = parseInt(document.getElementById("live-window").value, 10);
+          if (!Number.isFinite(winS) || winS < 5) winS = 90;
+          if (winS > 3600) winS = 3600;
+          const res = await apiFetch(apiLive + "?active_within_ms=" + encodeURIComponent(String(winS * 1000)));
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            if (!silent) {
+              liveEmpty.textContent =
+                typeof data.detail === "string" ? data.detail : "Failed to load (" + res.status + ").";
+            }
+            return;
+          }
+          const clients = data.clients || [];
+          liveBody.replaceChildren();
+          if (!clients.length) {
+            liveTable.classList.add("hidden");
+            liveEmpty.classList.remove("hidden");
+            liveEmpty.textContent = "(no recent /mcp clients)";
+            return;
+          }
+          liveEmpty.classList.add("hidden");
+          liveTable.classList.remove("hidden");
+          for (const c of clients) {
+            const tr = document.createElement("tr");
+            const tdS = document.createElement("td");
+            tdS.textContent = c.session_id || "—";
+            const tdC = document.createElement("td");
+            tdC.textContent = c.api_client_label ? (c.api_client_label + " (" + (c.api_client_id || "—") + ")") : (c.api_client_id || "—");
+            const tdP = document.createElement("td");
+            const preP = document.createElement("pre");
+            preP.style.margin = "0";
+            preP.style.background = "transparent";
+            preP.style.padding = "0";
+            preP.textContent = (c.peer || "—") + (c.user_agent ? ("\n" + c.user_agent) : "");
+            tdP.appendChild(preP);
+            const tdI = document.createElement("td");
+            tdI.textContent = fmtMs(c.idle_ms);
+            const tdR = document.createElement("td");
+            const calls = c.active_calls || [];
+            if (!calls.length) {
+              tdR.textContent = "—";
+            } else {
+              const pre = document.createElement("pre");
+              pre.style.margin = "0";
+              pre.style.background = "transparent";
+              pre.style.padding = "0";
+              pre.textContent = calls.map((x) => x.tool + " (" + fmtMs(x.running_ms) + ")").join("\n");
+              tdR.appendChild(pre);
+            }
+            tr.append(tdS, tdC, tdP, tdI, tdR);
+            liveBody.appendChild(tr);
+          }
+        }
         const clientsBody = document.getElementById("clients-body");
         const clientsTable = document.getElementById("clients-table");
         const clientsEmpty = document.getElementById("clients-empty");
@@ -1219,6 +1344,7 @@
 
         document.getElementById("logs-refresh").addEventListener("click", () => loadLogs({ silent: false }));
         document.getElementById("llm-refresh").addEventListener("click", () => loadLlmPreview());
+        document.getElementById("live-refresh").addEventListener("click", () => loadLive({ silent: false }));
 
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1231,11 +1357,18 @@
             panelReg.classList.toggle("hidden", tab !== "register");
             panelExp.classList.toggle("hidden", tab !== "explore");
             panelClients.classList.toggle("hidden", tab !== "clients");
+            panelLive.classList.toggle("hidden", tab !== "live");
             panelDomains.classList.toggle("hidden", tab !== "domains");
             panelLogs.classList.toggle("hidden", tab !== "logs");
             panelLlm.classList.toggle("hidden", tab !== "llm");
             if (tab === "explore") loadServers();
             if (tab === "clients") loadClients();
+            if (tab === "live") {
+              loadLive({ silent: false });
+              startLivePolling();
+            } else {
+              stopLivePolling();
+            }
             if (tab === "domains") loadDomainsPanel();
             if (tab === "logs") {
               loadLogs({ silent: false });
