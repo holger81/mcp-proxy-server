@@ -24,6 +24,9 @@ from mcp_proxy.mcp_live_tracker_middleware import McpLiveTrackerMiddleware
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
+from mcp_proxy.live_streamable_http_session_manager import (
+    LiveBindingStreamableHTTPSessionManager,
+)
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
 from mcp_proxy.security import AuthEnforcementMiddleware
 from mcp_proxy.settings import Settings
@@ -179,7 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.tool_call_stats_store,
         live_tracker=app.state.live_mcp_tracker,
     )
-    app.state.mcp_session_manager = StreamableHTTPSessionManager(
+    app.state.mcp_session_manager = LiveBindingStreamableHTTPSessionManager(
         mcp_sdk_server,
         stateless=False,
     )

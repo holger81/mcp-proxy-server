@@ -384,8 +384,9 @@
     <section id="panel-live" class="hidden" role="tabpanel">
       <h2>Live MCP clients</h2>
       <p class="hint">
-        Best-effort view of recent <code>/mcp</code> sessions and currently running <code>callTool</code> executions.
-        “Connected” means we saw traffic within the last ~90s (configurable in the API).
+        Best-effort view of recent <code>/mcp</code> sessions and <strong>in-flight</strong> <code>callTool</code> work
+        (the composite name <code>upstreamId/tool</code> while the upstream MCP call runs). Fast tools may appear only
+        briefly. “Connected” means we saw traffic within the window below (default ~90s).
       </p>
       <button type="button" class="secondary small" id="live-refresh" style="margin-top: 0.5rem">Refresh</button>
       <label for="live-window" class="hint" style="display: inline-block; margin-left: 0.75rem">Window (s)</label>
