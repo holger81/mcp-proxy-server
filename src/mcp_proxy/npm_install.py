@@ -45,6 +45,16 @@ def npm_root(data_dir: Path) -> Path:
     return (data_dir / "npm").resolve()
 
 
+def _is_githubish_install_spec(spec: str) -> bool:
+    s = spec.strip()
+    return bool(
+        _NPM_GITHUB_SPEC_RE.match(s)
+        or _NPM_GIT_HTTPS_SPEC_RE.match(s)
+        or _NPM_GITHUB_TARBALL_RE.match(s)
+        or _NPM_GITHUB_ARCHIVE_TARBALL_RE.match(s)
+    )
+
+
 def validate_npm_package_spec(spec: str) -> str:
     s = spec.strip()
     if not s or len(s) > 200:
@@ -138,8 +148,15 @@ def install_npm_prefix(
     target.mkdir(parents=True, exist_ok=True)
     before = _list_bin_names(_bin_dir(target))
 
+    # GitHub installs often need a build step (dist/ not prepublished), which in turn needs devDependencies.
+    # For registry packages we keep the lean install.
+    npm_args = ["npm", "install", "--prefix", str(target)]
+    if _is_githubish_install_spec(spec):
+        npm_args.append("--include=dev")
+    npm_args.append(spec)
+
     proc = subprocess.run(
-        ["npm", "install", "--prefix", str(target), spec],
+        npm_args,
         capture_output=True,
         text=True,
         timeout=600,
@@ -151,6 +168,22 @@ def install_npm_prefix(
         log_parts.append(proc.stderr)
     log = "".join(log_parts)
     ok = proc.returncode == 0
+
+    # If this looks like a source install (GitHub/tarball), attempt to build the package in-place.
+    # Many TS MCP servers publish only dist/ to npm but not in GitHub tarballs.
+    if ok and _is_githubish_install_spec(spec):
+        # Best-effort: run `npm run build` at the prefix root (works for tarballs that include build tooling).
+        build_proc = subprocess.run(
+            ["npm", "run", "build", "--prefix", str(target)],
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if build_proc.stdout:
+            log += "\n" + build_proc.stdout
+        if build_proc.stderr:
+            log += "\n" + build_proc.stderr
+        ok = ok and build_proc.returncode == 0
 
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
