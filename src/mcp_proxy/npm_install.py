@@ -78,6 +78,35 @@ def _iter_package_json_paths(node_modules: Path) -> list[Path]:
     return out
 
 
+def _package_lock_installed_dir(target: Path, spec: str) -> Path | None:
+    """Best-effort: locate installed package dir for `spec` via package-lock.json."""
+    lock = target / "package-lock.json"
+    if not lock.is_file():
+        return None
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    packages = data.get("packages")
+    if not isinstance(packages, dict):
+        return None
+    spec_norm = spec.strip()
+    matches: list[str] = []
+    for k, v in packages.items():
+        if not isinstance(k, str) or not isinstance(v, dict):
+            continue
+        resolved = v.get("resolved")
+        if not isinstance(resolved, str):
+            continue
+        if resolved == spec_norm or spec_norm in resolved or resolved in spec_norm:
+            if k and k != "":
+                matches.append(k)
+    if not matches:
+        return None
+    matches.sort(key=len)
+    return (target / matches[0]).resolve()
+
+
 def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path | None:
     """Try to locate the installed package dir to run `npm run build` in.
 
@@ -278,7 +307,9 @@ def install_npm_prefix(
     # If this looks like a source install (GitHub/tarball), attempt to build the installed package so
     # its bin target (often dist/) exists.
     if ok and _is_githubish_install_spec(spec):
-        build_prefix = _detect_build_prefix(target, guess_bin=guess)
+        build_prefix = _package_lock_installed_dir(
+            target, spec
+        ) or _detect_build_prefix(target, guess_bin=guess)
         if build_prefix is None:
             ok = False
             log += (
