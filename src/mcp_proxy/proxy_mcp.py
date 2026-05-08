@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import anyio
@@ -894,6 +895,7 @@ def build_proxy_mcp_server(
                     )
                 stderr_accum: list[str] = []
                 try:
+                    t0 = time.monotonic()
                     with anyio.fail_after(settings.upstream_timeout_s):
                         async with _upstream_streams(
                             upstream,
@@ -914,8 +916,14 @@ def build_proxy_mcp_server(
                 except McpError:
                     raise
                 except TimeoutError as e:
+                    elapsed = time.monotonic() - t0 if "t0" in locals() else None
                     tail = stderr_accum[0].strip() if stderr_accum else ""
-                    msg = f"Upstream {sid!r} timed out"
+                    msg = (
+                        f"Upstream {sid!r} timed out "
+                        f"(timeout_s={settings.upstream_timeout_s:g}"
+                        + (f", elapsed_s={elapsed:.1f}" if elapsed is not None else "")
+                        + ")"
+                    )
                     if tail:
                         msg += (
                             "\n\n--- stderr (upstream subprocess, possibly partial) ---\n"
