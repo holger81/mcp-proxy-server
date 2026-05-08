@@ -263,6 +263,10 @@ def install_npm_prefix(
     npm_args = ["npm", "install", "--prefix", str(target)]
     if _is_githubish_install_spec(spec):
         npm_args.append("--include=dev")
+        # GitHub/tarball installs often include a `prepare` script (eg lefthook install)
+        # that expects `git` to exist. This proxy image is intentionally minimal and may
+        # not have git. We run the build explicitly below, so skip lifecycle scripts.
+        npm_args.append("--ignore-scripts")
     npm_args.append(spec)
 
     code, log = _npm_run(npm_args, timeout_s=600)
@@ -286,7 +290,14 @@ def install_npm_prefix(
             # are not installed (so `tsc` might be missing). Install dev deps inside the extracted
             # package dir, then run build.
             dep_code, dep_log = _npm_run(
-                ["npm", "install", "--include=dev", "--prefix", str(build_prefix)],
+                [
+                    "npm",
+                    "install",
+                    "--include=dev",
+                    "--ignore-scripts",
+                    "--prefix",
+                    str(build_prefix),
+                ],
                 timeout_s=900,
             )
             if dep_log:
