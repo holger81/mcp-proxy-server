@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Truncate server instructions string (initialize / tools refresh); 0 = full text.
     instructions_max_chars: int = Field(default=0, ge=0, le=500_000)
 
+    # Upstream execution timeout (seconds) for callTool and admin inspect operations.
+    # Some upstream tools (e.g. IMAP move/copy) can take a while on large mailboxes.
+    upstream_timeout_s: float = Field(default=300.0, ge=5.0, le=3600.0)
+
     @field_validator("admin_password", "session_secret", mode="before")
     @classmethod
     def strip_secrets(cls, v: object) -> str:

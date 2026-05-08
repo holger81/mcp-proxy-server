@@ -37,7 +37,6 @@ from mcp_proxy.upstream_inspect import (
 
 log = logging.getLogger(__name__)
 
-_UPSTREAM_TIMEOUT_S = 120.0
 _TRUNC_SUFFIX = " …[truncated]"
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
 _ADMIN_SERVER_ID = "mcp-tools-admin"
@@ -289,8 +288,8 @@ async def _lookup_tool_row(
     if upstream is None or not upstream.enabled:
         return None
     try:
-        with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
-            tools = await _list_upstream_tools(upstream)
+        with anyio.fail_after(settings.upstream_timeout_s):
+            tools = await _list_upstream_tools(upstream, settings)
     except Exception:
         log.debug("lookup_tool_row: failed for %s", composite, exc_info=True)
         return None
@@ -342,8 +341,10 @@ async def _build_session_tool_list(
     return tools
 
 
-async def _list_upstream_tools(server: UpstreamServer) -> list[mcp_types.Tool]:
-    with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
+async def _list_upstream_tools(
+    server: UpstreamServer, settings: Settings
+) -> list[mcp_types.Tool]:
+    with anyio.fail_after(settings.upstream_timeout_s):
         async with _upstream_streams(server) as (read_stream, write_stream):
             async with ClientSession(
                 read_stream,
@@ -454,7 +455,7 @@ def _admin_tool_rows() -> list[dict[str, Any]]:
 
 
 async def _collect_all_tool_defs(
-    store: ServerConfigStore, domain_id: str | None
+    store: ServerConfigStore, settings: Settings, domain_id: str | None
 ) -> list[dict[str, Any]]:
     combined: list[dict[str, Any]] = []
     if domain_id in (None, _ADMIN_DOMAIN_ID):
@@ -465,7 +466,7 @@ async def _collect_all_tool_defs(
         if domain_id is not None and s.domain != domain_id:
             continue
         try:
-            tools = await _list_upstream_tools(s)
+            tools = await _list_upstream_tools(s, settings)
             combined.extend(_tool_defs_for_server(s, tools))
         except TimeoutError:
             log.warning("collect tools: timeout for upstream %s", s.id)
@@ -775,7 +776,7 @@ def build_proxy_mcp_server(
                     )
                 )
             offset, page_limit = _parse_domain_pagination(args, settings)
-            defs = await _collect_all_tool_defs(store, dom)
+            defs = await _collect_all_tool_defs(store, settings, dom)
             if list_all:
                 ordered = sorted(defs, key=lambda r: str(r.get("toolName", "")).lower())
                 total = len(ordered)
@@ -837,7 +838,7 @@ def build_proxy_mcp_server(
                         )
                     )
 
-            all_defs = await _collect_all_tool_defs(store, dom_filter)
+            all_defs = await _collect_all_tool_defs(store, settings, dom_filter)
             matches = [d for d in all_defs if _tool_row_matches_query(d, q)]
             matches.sort(key=lambda m: _rank_match_key(m, q))
             search_max = settings.tool_search_max_matches
@@ -893,7 +894,7 @@ def build_proxy_mcp_server(
                     )
                 stderr_accum: list[str] = []
                 try:
-                    with anyio.fail_after(_UPSTREAM_TIMEOUT_S):
+                    with anyio.fail_after(settings.upstream_timeout_s):
                         async with _upstream_streams(
                             upstream,
                             stdio_stderr_sink=stderr_accum,
