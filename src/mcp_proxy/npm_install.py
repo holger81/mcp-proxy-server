@@ -114,6 +114,25 @@ def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path 
     return best
 
 
+def _npm_run(
+    args: list[str],
+    *,
+    timeout_s: int,
+) -> tuple[int, str]:
+    proc = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+    parts: list[str] = []
+    if proc.stdout:
+        parts.append(proc.stdout)
+    if proc.stderr:
+        parts.append(proc.stderr)
+    return proc.returncode, "".join(parts)
+
+
 def validate_npm_package_spec(spec: str) -> str:
     s = spec.strip()
     if not s or len(s) > 200:
@@ -216,19 +235,8 @@ def install_npm_prefix(
         npm_args.append("--include=dev")
     npm_args.append(spec)
 
-    proc = subprocess.run(
-        npm_args,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    log_parts = []
-    if proc.stdout:
-        log_parts.append(proc.stdout)
-    if proc.stderr:
-        log_parts.append(proc.stderr)
-    log = "".join(log_parts)
-    ok = proc.returncode == 0
+    code, log = _npm_run(npm_args, timeout_s=600)
+    ok = code == 0
 
     # If this looks like a source install (GitHub/tarball), attempt to build the installed package so
     # its bin target (often dist/) exists.
@@ -241,17 +249,25 @@ def install_npm_prefix(
                 "For GitHub/tarball installs we need `scripts.build` to produce the CLI entrypoint.\n"
             )
         else:
-            build_proc = subprocess.run(
-                ["npm", "run", "build", "--prefix", str(build_prefix)],
-                capture_output=True,
-                text=True,
-                timeout=900,
+            # Important: when the GitHub tarball is installed as a dependency, its devDependencies
+            # are not installed (so `tsc` might be missing). Install dev deps inside the extracted
+            # package dir, then run build.
+            dep_code, dep_log = _npm_run(
+                ["npm", "install", "--include=dev", "--prefix", str(build_prefix)],
+                timeout_s=900,
             )
-        if build_proc.stdout:
-            log += "\n" + build_proc.stdout
-        if build_proc.stderr:
-            log += "\n" + build_proc.stderr
-        ok = ok and build_proc.returncode == 0
+            if dep_log:
+                log += "\n" + dep_log
+            if dep_code != 0:
+                ok = False
+            else:
+                build_code, build_log = _npm_run(
+                    ["npm", "run", "build", "--prefix", str(build_prefix)],
+                    timeout_s=900,
+                )
+                if build_log:
+                    log += "\n" + build_log
+                ok = build_code == 0
 
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
