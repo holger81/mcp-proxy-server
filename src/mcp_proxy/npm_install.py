@@ -10,9 +10,20 @@ from pathlib import Path
 
 from mcp_proxy.models import validate_slug_id
 
-# Scoped or unscoped package name, optional @version (no URLs / scripts).
-_NPM_SPEC_RE = re.compile(
+# Scoped or unscoped package name, optional @version.
+_NPM_NAME_SPEC_RE = re.compile(
     r"^(@[a-zA-Z0-9-]+/[a-zA-Z0-9._-]+|[a-zA-Z0-9][a-zA-Z0-9._-]*)(@[a-zA-Z0-9._-]+)?$"
+)
+
+# GitHub git spec for npm: github:owner/repo[#ref]
+_NPM_GITHUB_SPEC_RE = re.compile(
+    r"^github:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:#[A-Za-z0-9_.:/@+-]+)?$"
+)
+
+# git+https URL spec for npm: git+https://github.com/owner/repo(.git)?[#ref]
+_NPM_GIT_HTTPS_SPEC_RE = re.compile(
+    r"^git\+https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?"
+    r"(?:#[A-Za-z0-9_.:/@+-]+)?$"
 )
 
 _NPM_NOISE = frozenset({"npm", "npx", "node", "corepack"})
@@ -26,13 +37,24 @@ def validate_npm_package_spec(spec: str) -> str:
     s = spec.strip()
     if not s or len(s) > 200:
         raise ValueError("npm package spec empty or too long")
+    # For git specs we need ':' and '/' and '#' and '+' and '-' and '.'.
+    # Block shell metacharacters and quotes; allow '@' for npm scopes and refs.
     if any(c in s for c in ";|&`$()<>\"'\\\n\r\t"):
         raise ValueError("invalid npm package spec")
-    if "//" in s or s.startswith("-") or ".." in s:
-        raise ValueError("invalid npm package spec")
-    if not _NPM_SPEC_RE.match(s):
+    # Allow // only for explicit git+https://github.com/... specs.
+    if s.startswith("git+https://github.com/"):
+        if ".." in s or s.startswith("-"):
+            raise ValueError("invalid npm package spec")
+    else:
+        if "//" in s or s.startswith("-") or ".." in s:
+            raise ValueError("invalid npm package spec")
+    if not (
+        _NPM_NAME_SPEC_RE.match(s)
+        or _NPM_GITHUB_SPEC_RE.match(s)
+        or _NPM_GIT_HTTPS_SPEC_RE.match(s)
+    ):
         raise ValueError(
-            "npm package spec has unsupported shape (use name or @scope/name, optional @version)"
+            "npm package spec has unsupported shape (use name/@scope/name, or github:owner/repo#ref, or git+https://github.com/owner/repo.git#ref)"
         )
     return s
 
