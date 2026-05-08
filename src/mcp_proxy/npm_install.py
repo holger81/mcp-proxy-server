@@ -26,6 +26,18 @@ _NPM_GIT_HTTPS_SPEC_RE = re.compile(
     r"(?:#[A-Za-z0-9_.:/@+-]+)?$"
 )
 
+# GitHub tarball URL spec (no git needed):
+# - https://codeload.github.com/<owner>/<repo>/tar.gz/<ref>
+# - https://github.com/<owner>/<repo>/archive/refs/(heads|tags)/<ref>.tar.gz
+_NPM_GITHUB_TARBALL_RE = re.compile(
+    r"^https://codeload\.github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/tar\.gz/"
+    r"[A-Za-z0-9_.:/@+-]+$"
+)
+_NPM_GITHUB_ARCHIVE_TARBALL_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/archive/refs/"
+    r"(?:heads|tags)/[A-Za-z0-9_.:/@+-]+\.tar\.gz$"
+)
+
 _NPM_NOISE = frozenset({"npm", "npx", "node", "corepack"})
 
 
@@ -41,8 +53,12 @@ def validate_npm_package_spec(spec: str) -> str:
     # Block shell metacharacters and quotes; allow '@' for npm scopes and refs.
     if any(c in s for c in ";|&`$()<>\"'\\\n\r\t"):
         raise ValueError("invalid npm package spec")
-    # Allow // only for explicit git+https://github.com/... specs.
-    if s.startswith("git+https://github.com/"):
+    # Allow // only for explicit safe URL specs (git+https or GitHub tarballs).
+    if (
+        s.startswith("git+https://github.com/")
+        or s.startswith("https://codeload.github.com/")
+        or s.startswith("https://github.com/")
+    ):
         if ".." in s or s.startswith("-"):
             raise ValueError("invalid npm package spec")
     else:
@@ -52,9 +68,12 @@ def validate_npm_package_spec(spec: str) -> str:
         _NPM_NAME_SPEC_RE.match(s)
         or _NPM_GITHUB_SPEC_RE.match(s)
         or _NPM_GIT_HTTPS_SPEC_RE.match(s)
+        or _NPM_GITHUB_TARBALL_RE.match(s)
+        or _NPM_GITHUB_ARCHIVE_TARBALL_RE.match(s)
     ):
         raise ValueError(
-            "npm package spec has unsupported shape (use name/@scope/name, or github:owner/repo#ref, or git+https://github.com/owner/repo.git#ref)"
+            "npm package spec has unsupported shape (use name/@scope/name, github:owner/repo#ref, "
+            "git+https://github.com/owner/repo.git#ref, or a GitHub tarball URL)"
         )
     return s
 
