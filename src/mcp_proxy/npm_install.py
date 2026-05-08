@@ -114,6 +114,36 @@ def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path 
     return best
 
 
+def _read_package_bin_names(pkg_dir: Path) -> list[str]:
+    """Return bin names declared by the installed package, if any."""
+    pj = pkg_dir / "package.json"
+    if not pj.is_file():
+        return []
+    try:
+        data = json.loads(pj.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    bin_field = data.get("bin")
+    if isinstance(bin_field, str):
+        # Single binary; npm uses package name as bin name (usually), but also accepts explicit.
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            # @scope/pkg -> pkg
+            return [name.split("/", 1)[-1]]
+        return []
+    if isinstance(bin_field, dict):
+        return sorted(
+            [
+                k
+                for k, v in bin_field.items()
+                if isinstance(k, str) and isinstance(v, str)
+            ]
+        )
+    return []
+
+
 def _npm_run(
     args: list[str],
     *,
@@ -238,6 +268,9 @@ def install_npm_prefix(
     code, log = _npm_run(npm_args, timeout_s=600)
     ok = code == 0
 
+    build_prefix: Path | None = None
+    expected_bins: list[str] = []
+
     # If this looks like a source install (GitHub/tarball), attempt to build the installed package so
     # its bin target (often dist/) exists.
     if ok and _is_githubish_install_spec(spec):
@@ -268,18 +301,36 @@ def install_npm_prefix(
                 if build_log:
                     log += "\n" + build_log
                 ok = build_code == 0
+                if ok:
+                    expected_bins = _read_package_bin_names(build_prefix)
 
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
     all_bins = sorted(after - _NPM_NOISE)
     suggested: str | None = None
-    pick = _pick_bin(new_bins, guess)
+
+    def _pick_expected(cands: list[str]) -> str | None:
+        if not cands:
+            return None
+        for b in expected_bins:
+            if b in cands:
+                return b
+        return None
+
+    pick = _pick_expected(new_bins) or _pick_bin(new_bins, guess)
     if pick is None:
         # Reinstalling an already-present package may add no *new* binaries.
-        pick = _pick_bin(all_bins, guess)
+        pick = _pick_expected(all_bins) or _pick_bin(all_bins, guess)
     if pick:
         p = (_bin_dir(target) / pick).resolve()
         suggested = str(p)
+    elif expected_bins:
+        # We know which bin should exist but npm didn't link it; expose a helpful hint.
+        log += (
+            "\nExpected npm binaries were declared by the package but not found under node_modules/.bin: "
+            + ", ".join(expected_bins)
+            + "\n"
+        )
 
     return NpmInstallResult(
         ok=ok,
