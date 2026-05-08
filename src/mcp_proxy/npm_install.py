@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+import json
 
 from mcp_proxy.models import validate_slug_id
 
@@ -53,6 +54,64 @@ def _is_githubish_install_spec(spec: str) -> bool:
         or _NPM_GITHUB_TARBALL_RE.match(s)
         or _NPM_GITHUB_ARCHIVE_TARBALL_RE.match(s)
     )
+
+
+def _iter_package_json_paths(node_modules: Path) -> list[Path]:
+    """Return candidate package.json paths under node_modules (1 level + scopes)."""
+    out: list[Path] = []
+    if not node_modules.is_dir():
+        return out
+    for p in node_modules.iterdir():
+        if not p.is_dir():
+            continue
+        if p.name.startswith("@"):
+            for sub in p.iterdir():
+                if not sub.is_dir():
+                    continue
+                pj = sub / "package.json"
+                if pj.is_file():
+                    out.append(pj)
+            continue
+        pj = p / "package.json"
+        if pj.is_file():
+            out.append(pj)
+    return out
+
+
+def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path | None:
+    """Try to locate the installed package dir to run `npm run build` in.
+
+    When installing from git/tarball, `npm install --prefix <target> <spec>` installs the package under
+    `<target>/node_modules/<pkg>`, not at `<target>/package.json`.
+    """
+    node_modules = target / "node_modules"
+    candidates = _iter_package_json_paths(node_modules)
+    best: Path | None = None
+    best_score = -1
+    for pj in candidates:
+        try:
+            pkg = json.loads(pj.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(pkg, dict):
+            continue
+        scripts = pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {}
+        has_build = isinstance(scripts, dict) and "build" in scripts
+        if not has_build:
+            continue
+        score = 0
+        bin_field = pkg.get("bin")
+        if isinstance(bin_field, dict) and guess_bin and guess_bin in bin_field:
+            score += 10
+        name = pkg.get("name")
+        if isinstance(name, str) and guess_bin and guess_bin in name:
+            score += 3
+        if isinstance(bin_field, (dict, str)):
+            score += 1
+        if score > best_score:
+            best_score = score
+            best = pj.parent
+    return best
 
 
 def validate_npm_package_spec(spec: str) -> str:
@@ -148,6 +207,8 @@ def install_npm_prefix(
     target.mkdir(parents=True, exist_ok=True)
     before = _list_bin_names(_bin_dir(target))
 
+    guess = _guess_bin_stem(spec).replace("_", "-")
+
     # GitHub installs often need a build step (dist/ not prepublished), which in turn needs devDependencies.
     # For registry packages we keep the lean install.
     npm_args = ["npm", "install", "--prefix", str(target)]
@@ -169,16 +230,23 @@ def install_npm_prefix(
     log = "".join(log_parts)
     ok = proc.returncode == 0
 
-    # If this looks like a source install (GitHub/tarball), attempt to build the package in-place.
-    # Many TS MCP servers publish only dist/ to npm but not in GitHub tarballs.
+    # If this looks like a source install (GitHub/tarball), attempt to build the installed package so
+    # its bin target (often dist/) exists.
     if ok and _is_githubish_install_spec(spec):
-        # Best-effort: run `npm run build` at the prefix root (works for tarballs that include build tooling).
-        build_proc = subprocess.run(
-            ["npm", "run", "build", "--prefix", str(target)],
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
+        build_prefix = _detect_build_prefix(target, guess_bin=guess)
+        if build_prefix is None:
+            ok = False
+            log += (
+                "\nCould not locate an installed package with a build script under node_modules/. "
+                "For GitHub/tarball installs we need `scripts.build` to produce the CLI entrypoint.\n"
+            )
+        else:
+            build_proc = subprocess.run(
+                ["npm", "run", "build", "--prefix", str(build_prefix)],
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
         if build_proc.stdout:
             log += "\n" + build_proc.stdout
         if build_proc.stderr:
@@ -188,7 +256,6 @@ def install_npm_prefix(
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
     all_bins = sorted(after - _NPM_NOISE)
-    guess = _guess_bin_stem(spec).replace("_", "-")
     suggested: str | None = None
     pick = _pick_bin(new_bins, guess)
     if pick is None:
