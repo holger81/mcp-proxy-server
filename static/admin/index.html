@@ -253,6 +253,7 @@
       <button type="button" class="tab" data-tab="domains" role="tab" aria-selected="false">Domains</button>
       <button type="button" class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
       <button type="button" class="tab" data-tab="llm" role="tab" aria-selected="false">LLM preview</button>
+      <button type="button" class="tab" data-tab="mailmcp" role="tab" aria-selected="false">Mail MCP</button>
       <button type="button" class="secondary push-end hidden" id="btn-logout">Log out</button>
     </nav>
 
@@ -462,6 +463,23 @@
       <p id="llm-empty" class="hint">Open this tab to load the preview.</p>
     </section>
 
+    <section id="panel-mailmcp" class="hidden" role="tabpanel">
+      <h2>mail-mcp (Rust binary)</h2>
+      <p class="hint">
+        Downloads the Linux amd64 release from GitHub into <code>/data/mail-mcp/</code>. The wrapper command
+        <code>mail-mcp</code> prefers that copy over the image-baked binary. Needs outbound HTTPS from the container.
+      </p>
+      <button type="button" class="secondary small" id="mailmcp-refresh" style="margin-top: 0.5rem">Refresh status</button>
+      <div id="mailmcp-msg"></div>
+      <pre id="mailmcp-status-pre" class="hidden" style="margin-top: 0.75rem; max-height: 14rem; overflow: auto"></pre>
+      <p id="mailmcp-status-empty" class="hint">Open this tab to load.</p>
+      <label for="mailmcp-version">Release tag or <code>latest</code></label>
+      <input id="mailmcp-version" type="text" autocomplete="off" placeholder="latest or v0.4.5" value="latest" />
+      <p class="hint">Use a tag from the upstream repo’s releases page, or <code>latest</code> for GitHub’s current release.</p>
+      <button type="button" id="mailmcp-update">Download and install</button>
+      <pre id="mailmcp-update-out" class="hidden" style="margin-top: 0.75rem; max-height: 12rem; overflow: auto"></pre>
+    </section>
+
     <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
       <div class="dialog-inner">
         <h2 id="edit-dialog-title">Edit server</h2>
@@ -560,6 +578,7 @@
         const apiLogs = "/api/logs";
         const apiLlmPreview = "/api/mcp-llm-preview";
         const apiLive = "/api/mcp-live";
+        const apiMailMcp = "/api/mail-mcp";
 
         let cachedDomains = [];
 
@@ -613,6 +632,7 @@
         const panelDomains = document.getElementById("panel-domains");
         const panelLogs = document.getElementById("panel-logs");
         const panelLlm = document.getElementById("panel-llm");
+        const panelMailMcp = document.getElementById("panel-mailmcp");
         const liveBody = document.getElementById("live-body");
         const liveTable = document.getElementById("live-table");
         const liveEmpty = document.getElementById("live-empty");
@@ -1246,6 +1266,10 @@
         const logsEmpty = document.getElementById("logs-empty");
         const adminLlmPre = document.getElementById("admin-llm-preview");
         const llmEmpty = document.getElementById("llm-empty");
+        const mailmcpMsg = document.getElementById("mailmcp-msg");
+        const mailmcpStatusPre = document.getElementById("mailmcp-status-pre");
+        const mailmcpStatusEmpty = document.getElementById("mailmcp-status-empty");
+        const mailmcpUpdateOut = document.getElementById("mailmcp-update-out");
 
         let logsPollId = null;
         const LOGS_POLL_MS = 2500;
@@ -1375,9 +1399,70 @@
           adminLlmPre.textContent = JSON.stringify(data, null, 2);
         }
 
+        async function loadMailMcpStatus() {
+          mailmcpMsg.innerHTML = "";
+          mailmcpStatusEmpty.classList.remove("hidden");
+          mailmcpStatusEmpty.textContent = "Loading…";
+          mailmcpStatusPre.classList.add("hidden");
+          const res = await apiFetch(apiMailMcp + "/status");
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            mailmcpStatusEmpty.textContent =
+              typeof data.detail === "string" ? data.detail : "Failed to load status (" + res.status + ").";
+            return;
+          }
+          if (data.install_script_present === false) {
+            mailmcpMsg.innerHTML =
+              '<div class="msg err">Install script not found on this host. Use the Docker image, or run <code>docker/…/install-mail-mcp-release.sh</code> manually.</div>';
+          } else if (data.amd64_linux_binary_supported === false) {
+            mailmcpMsg.innerHTML =
+              '<div class="msg err">This CPU architecture has no upstream Linux amd64 tarball. Use <code>platform: linux/amd64</code> in Compose, or place a binary under <code>' +
+              (data.volume_binary_path || "/data/mail-mcp/mail-mcp") +
+              "</code>.</div>";
+          }
+          mailmcpStatusEmpty.classList.add("hidden");
+          mailmcpStatusPre.classList.remove("hidden");
+          mailmcpStatusPre.textContent = JSON.stringify(data, null, 2);
+        }
+
         document.getElementById("logs-refresh").addEventListener("click", () => loadLogs({ silent: false }));
         document.getElementById("llm-refresh").addEventListener("click", () => loadLlmPreview());
         document.getElementById("live-refresh").addEventListener("click", () => loadLive({ silent: false }));
+        document.getElementById("mailmcp-refresh").addEventListener("click", () => loadMailMcpStatus());
+        document.getElementById("mailmcp-update").addEventListener("click", async () => {
+          mailmcpMsg.innerHTML = "";
+          mailmcpUpdateOut.classList.add("hidden");
+          mailmcpUpdateOut.textContent = "";
+          const ver = document.getElementById("mailmcp-version").value.trim();
+          if (!ver) {
+            mailmcpMsg.innerHTML = '<div class="msg err">Enter a version or <code>latest</code>.</div>';
+            return;
+          }
+          mailmcpMsg.innerHTML = '<div class="msg ok">Downloading…</div>';
+          const res = await apiFetch(apiMailMcp + "/update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ version: ver }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            let detail = "";
+            const d = data.detail;
+            if (typeof d === "string") detail = d;
+            else if (d && typeof d === "object") {
+              if (d.output) detail = d.output;
+              else detail = JSON.stringify(d, null, 2);
+            } else detail = "Request failed (" + res.status + ").";
+            mailmcpMsg.innerHTML = '<div class="msg err">Update failed.</div>';
+            mailmcpUpdateOut.classList.remove("hidden");
+            mailmcpUpdateOut.textContent = detail;
+            return;
+          }
+          mailmcpMsg.innerHTML = '<div class="msg ok">Installed.</div>';
+          mailmcpUpdateOut.classList.remove("hidden");
+          mailmcpUpdateOut.textContent = data.output || "(no script output)";
+          await loadMailMcpStatus();
+        });
 
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1394,6 +1479,7 @@
             panelDomains.classList.toggle("hidden", tab !== "domains");
             panelLogs.classList.toggle("hidden", tab !== "logs");
             panelLlm.classList.toggle("hidden", tab !== "llm");
+            panelMailMcp.classList.toggle("hidden", tab !== "mailmcp");
             if (tab === "explore") loadServers();
             if (tab === "clients") loadClients();
             if (tab === "live") {
@@ -1410,6 +1496,7 @@
               stopLogsPolling();
             }
             if (tab === "llm") loadLlmPreview();
+            if (tab === "mailmcp") loadMailMcpStatus();
           });
         });
 

@@ -138,6 +138,7 @@ Built-in UI at `/admin`:
 - Inspect tool exposure
 - Preview what the LLM sees
 - View logs
+- **Mail MCP** tab: download or update the mail-mcp Linux binary into `/data/mail-mcp/` (amd64 / Docker image)
 
 ---
 ### 🔌 5. Supports all MCP server types
@@ -160,8 +161,9 @@ Built-in UI at `/admin`:
 
 ```bash
 docker build -t mcp-proxy .
-# Optional: pin another mail-mcp release (Linux amd64 binary baked into the image):
-# docker build --build-arg MAIL_MCP_VERSION=v0.4.5 -t mcp-proxy .
+# Optional: pin another mail-mcp release (Linux amd64 binary baked into the image).
+# Use a tag (v0.4.5) or `latest` for GitHub’s current release:
+# docker build --build-arg MAIL_MCP_VERSION=latest -t mcp-proxy .
 docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 ```
 
@@ -172,7 +174,7 @@ docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 docker compose up -d --build
 ```
 
-The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** (Rust) for **linux/amd64** only: **`/usr/local/bin/mail-mcp`** runs **`/data/mail-mcp/mail-mcp`** if you installed one there, otherwise **`/opt/mail-mcp/mail-mcp`** from the release pinned at build time (`MAIL_MCP_VERSION`, default **v0.4.5**).
+The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** (Rust) for **linux/amd64** only: **`/usr/local/bin/mail-mcp`** runs **`/data/mail-mcp/mail-mcp`** if you installed one there, otherwise **`/opt/mail-mcp/mail-mcp`** from the release chosen at build time (`MAIL_MCP_VERSION`: a tag like **v0.4.5**, or **`latest`** to follow GitHub’s “latest release” asset URL — not a git tag).
 
 **Register in Admin → Add server → stdio:** command **`mail-mcp`** (or **`/usr/local/bin/mail-mcp`**) plus whatever env that server expects.
 
@@ -183,7 +185,7 @@ docker compose exec mcp-proxy sh -c \
   'MAIL_MCP_VERSION=v0.4.5 MAIL_MCP_INSTALL_DEST=/data/mail-mcp sh /app/docker/install-mail-mcp-release.sh'
 ```
 
-Change **`MAIL_MCP_VERSION`** to any existing **[GitHub release tag](https://github.com/tecnologicachile/mail-mcp/releases)**. ARM64 Linux images have **no** upstream prebuilt binary; use **`platform: linux/amd64`** for the service or install manually.
+Use **`MAIL_MCP_VERSION=latest`** to pull whatever GitHub marks as the **[latest release](https://github.com/tecnologicachile/mail-mcp/releases/latest)**. Otherwise set it to a **[release tag](https://github.com/tecnologicachile/mail-mcp/releases)** (e.g. `v0.4.5`). ARM64 Linux images have **no** upstream prebuilt binary; use **`platform: linux/amd64`** for the service or install manually.
 
 ---
 ### 🌐 Open

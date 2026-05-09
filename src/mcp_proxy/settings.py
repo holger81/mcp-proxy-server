@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     data_dir: Path = Path("/data")  # config, /venvs, /npm
+    # Docker image path to install-mail-mcp-release.sh; override for custom layouts.
+    mail_mcp_install_script: Path = Path("/app/docker/install-mail-mcp-release.sh")
     allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = True
     allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = True
     static_root: Path = Path("static")

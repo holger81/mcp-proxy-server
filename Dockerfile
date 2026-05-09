@@ -42,12 +42,17 @@ RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
 
 # mail-mcp (Rust): prebuilt x86_64-unknown-linux-gnu only. Omit on non-amd64 builds (no upstream asset).
+# MAIL_MCP_VERSION may be a tag (e.g. v0.4.5) or "latest" → GitHub's rolling latest release asset URL.
 RUN mkdir -p /opt/mail-mcp \
     && ARCH="$(dpkg --print-architecture)" \
     && if [ "$ARCH" = "amd64" ]; then \
-      curl -fsSL \
-        "https://github.com/tecnologicachile/mail-mcp/releases/download/${MAIL_MCP_VERSION}/mail-mcp-x86_64-unknown-linux-gnu.tar.xz" \
-        | tar -xJf - -C /tmp \
+      ASSET="mail-mcp-x86_64-unknown-linux-gnu.tar.xz" \
+      && if [ "$MAIL_MCP_VERSION" = "latest" ]; then \
+        URL="https://github.com/tecnologicachile/mail-mcp/releases/latest/download/${ASSET}"; \
+      else \
+        URL="https://github.com/tecnologicachile/mail-mcp/releases/download/${MAIL_MCP_VERSION}/${ASSET}"; \
+      fi \
+      && curl -fsSL "$URL" | tar -xJf - -C /tmp \
       && install -m 0755 "/tmp/mail-mcp-x86_64-unknown-linux-gnu/mail-mcp" /opt/mail-mcp/mail-mcp \
       && rm -rf "/tmp/mail-mcp-x86_64-unknown-linux-gnu"; \
     else \
