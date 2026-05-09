@@ -1,0 +1,66 @@
+diff --git a/src/services/imap.service.ts b/src/services/imap.service.ts
+index 17be138..e5f9d99 100644
+--- a/src/services/imap.service.ts
++++ b/src/services/imap.service.ts
+@@ -779,6 +779,18 @@ export default class ImapService {
+     }
+   }
+ 
++  /** UID-range COPY can stall on some hosts (e.g. Exchange Online); single-UID steps match ``moveEmail``. */
++  private static async copyThenDeleteEachUid(
++    client: ImapFlow,
++    ids: number[],
++    destinationMailbox: string,
++  ): Promise<void> {
++    for (const uid of ids) {
++      // eslint-disable-next-line no-await-in-loop
++      await ImapService.copyThenDelete(client, String(uid), destinationMailbox);
++    }
++  }
++
+   async moveEmail(
+     accountName: string,
+     emailId: string,
+@@ -922,8 +934,10 @@ export default class ImapService {
+     destination: string,
+   ): Promise<BulkResult> {
+     const client = await this.connections.getImapClient(accountName);
+-    await ImapService.assertRealMailbox(client, mailbox);
+-    const lock = await client.getMailboxLock(mailbox);
++    const safeMailbox = sanitizeMailboxName(mailbox);
++    const safeDest = sanitizeMailboxName(destination);
++    await ImapService.assertRealMailbox(client, safeMailbox);
++    const lock = await client.getMailboxLock(safeMailbox);
+     const result: BulkResult = {
+       total: ids.length,
+       succeeded: 0,
+@@ -931,8 +945,7 @@ export default class ImapService {
+       errors: [],
+     };
+     try {
+-      const range = ids.join(',');
+-      await ImapService.copyThenDelete(client, range, destination);
++      await ImapService.copyThenDeleteEachUid(client, ids, safeDest);
+       result.succeeded = ids.length;
+     } catch (err) {
+       result.failed = ids.length;
+@@ -976,15 +989,15 @@ export default class ImapService {
+         lock.release();
+       }
+     } else {
+-      await ImapService.assertRealMailbox(client, mailbox);
++      const safeMailbox = sanitizeMailboxName(mailbox);
++      await ImapService.assertRealMailbox(client, safeMailbox);
+       const mailboxes = await client.list();
+       const trash = mailboxes.find((mb) => mb.specialUse === '\\Trash');
+       const trashPath = trash?.path ?? 'Trash';
+ 
+-      const lock = await client.getMailboxLock(mailbox);
++      const lock = await client.getMailboxLock(safeMailbox);
+       try {
+-        const range = ids.join(',');
+-        await ImapService.copyThenDelete(client, range, trashPath);
++        await ImapService.copyThenDeleteEachUid(client, ids, trashPath);
+         result.succeeded = ids.length;
+       } catch (err) {
+         result.failed = ids.length;
