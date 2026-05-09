@@ -29,7 +29,15 @@ if [ "$(id -u)" = "0" ]; then
   export MCP_PROXY_DATA_DIR
   export MCP_NEWS_DEFAULT_FEEDS="${MCP_NEWS_DEFAULT_FEEDS:-/app/mcp-news-default-feeds.yaml}"
   python3 /app/docker/seed_mcp_news.py
-  chown -R appuser:appuser /data
+  # Do not chown /data/extra-ca (often a read-only PEM bind mount).
+  for d in /data/config /data/mcp-news /data/mail-mcp /data/npm /data/venvs; do
+    if [ -d "$d" ]; then
+      chown -R appuser:appuser "$d"
+    fi
+  done
+  for f in /data/*.json; do
+    [ -f "$f" ] && chown appuser:appuser "$f"
+  done
   exec gosu appuser "$@"
 fi
 exec "$@"
