@@ -178,6 +178,46 @@ The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** 
 
 **Register mail-mcp:** Admin → **Register manual stdio MCP** (command **`mail-mcp`** or **`/usr/local/bin/mail-mcp`**) and set env vars. Or use MCP **`mcp-tools-admin/registerManualStdioServer`**.
 
+Use segment **`DEFAULT`** unless you configure multi-account (`MAIL_IMAP_WORK_*`, etc.). Paste into **Environment** (JSON) on the manual stdio form, or into Compose — keys must be **strings** in JSON (`"true"` not `true`).
+
+`MAIL_*` reference: [mail-mcp account setup](https://github.com/tecnologicachile/mail-mcp/blob/main/docs/account-setup.md). There is **no** documented env var to disable TLS certificate verification; fix CA / hostname instead.
+
+**Example — Admin UI Environment field (replace placeholders):**
+
+```json
+{
+  "MAIL_IMAP_DEFAULT_HOST": "imap.example.com",
+  "MAIL_IMAP_DEFAULT_PORT": "993",
+  "MAIL_IMAP_DEFAULT_USER": "you@example.com",
+  "MAIL_IMAP_DEFAULT_PASS": "your-secret",
+  "MAIL_IMAP_DEFAULT_SECURE": "true",
+  "MAIL_SMTP_DEFAULT_HOST": "smtp.example.com",
+  "MAIL_SMTP_DEFAULT_PORT": "587",
+  "MAIL_SMTP_DEFAULT_USER": "you@example.com",
+  "MAIL_SMTP_DEFAULT_PASS": "your-secret",
+  "MAIL_SMTP_DEFAULT_SECURE": "starttls",
+  "MAIL_IMAP_WRITE_ENABLED": "true",
+  "MAIL_SMTP_WRITE_ENABLED": "true"
+}
+```
+
+**Example — shell / `.env` (same keys; no `MCP_PROXY_` prefix on these — they are for the mail-mcp process):**
+
+```bash
+MAIL_IMAP_DEFAULT_HOST=imap.example.com
+MAIL_IMAP_DEFAULT_PORT=993
+MAIL_IMAP_DEFAULT_USER=you@example.com
+MAIL_IMAP_DEFAULT_PASS=your-secret
+MAIL_IMAP_DEFAULT_SECURE=true
+MAIL_SMTP_DEFAULT_HOST=smtp.example.com
+MAIL_SMTP_DEFAULT_PORT=587
+MAIL_SMTP_DEFAULT_USER=you@example.com
+MAIL_SMTP_DEFAULT_PASS=your-secret
+MAIL_SMTP_DEFAULT_SECURE=starttls
+MAIL_IMAP_WRITE_ENABLED=true
+MAIL_SMTP_WRITE_ENABLED=true
+```
+
 **Update the mail-mcp binary** without rebuilding the proxy image (writes into the volume; survives image bumps): Admin → **Explore servers** → **Update mail-mcp binary** on that row, or:
 
 

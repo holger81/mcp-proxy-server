@@ -310,6 +310,74 @@
           <textarea id="ms-llm" rows="3"></textarea>
           <label for="ms-env">Environment <span class="hint">(JSON object; scalars only)</span></label>
           <textarea id="ms-env" placeholder="{}">{}</textarea>
+          <details style="margin-top: 0.75rem">
+            <summary style="cursor: pointer; color: #9898b0">mail-mcp — environment variables (reference)</summary>
+            <p class="hint" style="margin-top: 0.6rem">
+              Use segment names like <code>DEFAULT</code>, <code>WORK</code>, <code>GMAIL</code> in place of
+              <code>DEFAULT</code> below. Multi-account = multiple <code>MAIL_*_<SEG>_…</code> groups.
+              <a href="https://github.com/tecnologicachile/mail-mcp/blob/main/docs/account-setup.md">Full upstream docs</a>.
+              There is no supported env var to skip TLS certificate verification.
+            </p>
+            <p style="margin-top: 0.65rem; font-size: 0.88rem; color: #c8c8d8"><strong>IMAP / SMTP (per segment)</strong></p>
+            <pre style="margin-top: 0.35rem; font-size: 0.78rem; line-height: 1.45">
+MAIL_IMAP_DEFAULT_HOST
+MAIL_IMAP_DEFAULT_PORT
+MAIL_IMAP_DEFAULT_USER
+MAIL_IMAP_DEFAULT_PASS
+MAIL_IMAP_DEFAULT_SECURE
+
+MAIL_SMTP_DEFAULT_HOST
+MAIL_SMTP_DEFAULT_PORT
+MAIL_SMTP_DEFAULT_USER
+MAIL_SMTP_DEFAULT_PASS
+MAIL_SMTP_DEFAULT_SECURE</pre>
+            <p class="hint"><code>MAIL_IMAP_*_SECURE</code>: typically <code>true</code>. <code>MAIL_SMTP_*_SECURE</code>:
+              <code>starttls</code>, <code>tls</code>, or <code>plain</code>.</p>
+            <p style="margin-top: 0.65rem; font-size: 0.88rem; color: #c8c8d8"><strong>OAuth2 (optional, per segment)</strong></p>
+            <pre style="margin-top: 0.35rem; font-size: 0.78rem; line-height: 1.45">
+MAIL_OAUTH2_DEFAULT_PROVIDER
+MAIL_OAUTH2_DEFAULT_CLIENT_ID
+MAIL_OAUTH2_DEFAULT_CLIENT_SECRET
+MAIL_OAUTH2_DEFAULT_REFRESH_TOKEN</pre>
+            <p style="margin-top: 0.65rem; font-size: 0.88rem; color: #c8c8d8"><strong>Microsoft Graph / EWS (optional)</strong></p>
+            <pre style="margin-top: 0.35rem; font-size: 0.78rem; line-height: 1.45">
+MAIL_GRAPH_DEFAULT_PROVIDER
+MAIL_GRAPH_DEFAULT_CLIENT_ID
+MAIL_GRAPH_DEFAULT_CLIENT_SECRET
+MAIL_GRAPH_DEFAULT_REFRESH_TOKEN
+
+MAIL_EWS_DEFAULT_USER
+MAIL_EWS_DEFAULT_REFRESH_TOKEN
+MAIL_EWS_DEFAULT_CLIENT_ID
+MAIL_EWS_DEFAULT_CLIENT_SECRET</pre>
+            <p style="margin-top: 0.65rem; font-size: 0.88rem; color: #c8c8d8"><strong>Global flags</strong></p>
+            <pre style="margin-top: 0.35rem; font-size: 0.78rem; line-height: 1.45">
+MAIL_IMAP_WRITE_ENABLED
+MAIL_SMTP_WRITE_ENABLED
+MAIL_SMTP_SAVE_SENT
+
+MAIL_IMAP_CONNECT_TIMEOUT_MS
+MAIL_IMAP_GREETING_TIMEOUT_MS
+MAIL_IMAP_SOCKET_TIMEOUT_MS
+MAIL_SMTP_CONNECT_TIMEOUT_MS
+MAIL_SMTP_SEND_TIMEOUT_MS</pre>
+            <p class="hint" style="margin-top: 0.5rem">Example JSON (paste into Environment; replace values):</p>
+            <pre style="margin-top: 0.35rem; font-size: 0.78rem; line-height: 1.35">
+{
+  "MAIL_IMAP_DEFAULT_HOST": "imap.example.com",
+  "MAIL_IMAP_DEFAULT_PORT": "993",
+  "MAIL_IMAP_DEFAULT_USER": "you@example.com",
+  "MAIL_IMAP_DEFAULT_PASS": "your-secret",
+  "MAIL_IMAP_DEFAULT_SECURE": "true",
+  "MAIL_SMTP_DEFAULT_HOST": "smtp.example.com",
+  "MAIL_SMTP_DEFAULT_PORT": "587",
+  "MAIL_SMTP_DEFAULT_USER": "you@example.com",
+  "MAIL_SMTP_DEFAULT_PASS": "your-secret",
+  "MAIL_SMTP_DEFAULT_SECURE": "starttls",
+  "MAIL_IMAP_WRITE_ENABLED": "true",
+  "MAIL_SMTP_WRITE_ENABLED": "true"
+}</pre>
+          </details>
           <button type="submit">Register manual stdio</button>
         </fieldset>
       </form>
