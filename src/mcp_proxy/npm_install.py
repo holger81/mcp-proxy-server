@@ -241,15 +241,52 @@ def _guess_bin_stem(spec: str) -> str:
         parts = s[1:].split("/", 1)
         if len(parts) == 2:
             return parts[1].split("@", 1)[0]
+    # GitHub tarball / codeload URL: use repo segment (not the whole URL) as guess.
+    m = re.match(r"^https://github\.com/[^/]+/([^/]+)/archive/", s)
+    if m:
+        return m.group(1)
+    m = re.match(r"^https://codeload\.github\.com/[^/]+/([^/]+)/tar\.gz/", s)
+    if m:
+        return m.group(1)
+    # github:owner/repo / git+https — take last path segment before # or end.
+    if s.startswith("github:"):
+        rest = s.removeprefix("github:").split("#", 1)[0]
+        seg = rest.rsplit("/", 1)[-1] if rest else ""
+        if seg:
+            return seg.removesuffix(".git")
+    if s.startswith("git+https://github.com/"):
+        path = s.removeprefix("git+https://github.com/").split("#", 1)[0]
+        parts = [p for p in path.split("/") if p and p not in (".git",)]
+        if len(parts) >= 2:
+            return parts[1].removesuffix(".git")
     return s.split("@", 1)[0]
 
 
 def _pick_bin(candidates: list[str], guess: str) -> str | None:
+    """Pick a .bin name; never default to arbitrary first entry (alphabet can pick deps like `which`)."""
     if not candidates:
         return None
     gg = guess.replace("_", "-")
-    exact = next((b for b in candidates if b.replace("_", "-") == gg), None)
-    return exact or candidates[0]
+    norm = [b.replace("_", "-") for b in candidates]
+    exact_idx = next((i for i, bb in enumerate(norm) if bb == gg), None)
+    if exact_idx is not None:
+        return candidates[exact_idx]
+    # Repo `foo-bar-email-mcp` often ships bin `email-mcp` — match longest suffix.
+    suffix_idxs = [
+        i for i, bb in enumerate(norm) if gg == bb or gg.endswith(bb) or gg.endswith("-" + bb)
+    ]
+    if suffix_idxs:
+        best = max(suffix_idxs, key=lambda i: len(norm[i]))
+        return candidates[best]
+    prefix_idxs = [
+        i
+        for i, bb in enumerate(norm)
+        if bb.startswith(gg + "-") or gg.startswith(bb + "-")
+    ]
+    if prefix_idxs:
+        best = max(prefix_idxs, key=lambda i: len(norm[i]))
+        return candidates[best]
+    return None
 
 
 @dataclass
@@ -317,6 +354,9 @@ def install_npm_prefix(
                 "For GitHub/tarball installs we need `scripts.build` to produce the CLI entrypoint.\n"
             )
         else:
+            # Know the real CLI name(s) from package.json immediately — do not rely on build success
+            # or npm's .bin ordering (deps like `which` sort first alphabetically).
+            expected_bins = _read_package_bin_names(build_prefix)
             # Important: when the GitHub tarball is installed as a dependency, its devDependencies
             # are not installed (so `tsc` might be missing). Install dev deps inside the extracted
             # package dir, then run build.
@@ -343,8 +383,6 @@ def install_npm_prefix(
                 if build_log:
                     log += "\n" + build_log
                 ok = build_code == 0
-                if ok:
-                    expected_bins = _read_package_bin_names(build_prefix)
 
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
