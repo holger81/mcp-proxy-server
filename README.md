@@ -185,7 +185,9 @@ Use segment **`DEFAULT`** unless you configure multi-account (`MAIL_IMAP_WORK_*`
 
 `MAIL_*` reference: [mail-mcp account setup](https://github.com/tecnologicachile/mail-mcp/blob/main/docs/account-setup.md). There is **no** documented env var to disable TLS certificate verification; fix CA / hostname instead.
 
-**Private CA / self-signed IMAP TLS:** place `*.pem` or `*.crt` files in **`docker/extra-ca/`** on the host. Docker Compose bind-mounts that folder to `/data/extra-ca`; the entrypoint installs them into the container OS trust store before the app starts (PEM contents stay gitignored). For a plain `docker run`, add `-v "$(pwd)/docker/extra-ca:/data/extra-ca:ro"`.
+**Extra TLS CAs (OpenSSL / system bundle users):** place `*.pem` or `*.crt` files in **`docker/extra-ca/`** on the host. Compose mounts that folder to `/data/extra-ca`; the entrypoint adds them to the Debian trust store (PEM contents stay gitignored). For `docker run`, add `-v "$(pwd)/docker/extra-ca:/data/extra-ca:ro"`.
+
+**mail-mcp (bundled Rust binary)** validates TLS with the **Mozilla root bundle baked into the app** ([`webpki-roots`](https://github.com/tecnologicachile/mail-mcp/blob/main/src/imap.rs)), **not** the OS CA store—so **UnknownIssuer** against a private CA / self-signed server will persist until the server presents a chain trusted by public CAs, or [mail-mcp](https://github.com/tecnologicachile/mail-mcp) gains support for extra roots (e.g. `rustls-native-certs` or a `MAIL_*` CA path). Practical options: terminate IMAP with a **Let’s Encrypt** (or other publicly trusted) certificate on the hostname clients use, or run mail-mcp from a build that adds your CA to its trust roots.
 
 **Example — Admin UI Environment field (replace placeholders):**
 
