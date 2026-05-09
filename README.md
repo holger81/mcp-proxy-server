@@ -160,6 +160,8 @@ Built-in UI at `/admin`:
 
 ```bash
 docker build -t mcp-proxy .
+# Optional: pin another mail-mcp release (Linux amd64 binary baked into the image):
+# docker build --build-arg MAIL_MCP_VERSION=v0.4.5 -t mcp-proxy .
 docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 ```
 
@@ -169,6 +171,19 @@ docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
 ```bash
 docker compose up -d --build
 ```
+
+The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** (Rust) for **linux/amd64** only: **`/usr/local/bin/mail-mcp`** runs **`/data/mail-mcp/mail-mcp`** if you installed one there, otherwise **`/opt/mail-mcp/mail-mcp`** from the release pinned at build time (`MAIL_MCP_VERSION`, default **v0.4.5**).
+
+**Register in Admin → Add server → stdio:** command **`mail-mcp`** (or **`/usr/local/bin/mail-mcp`**) plus whatever env that server expects.
+
+**Update mail-mcp without rebuilding the proxy image** (writes into the volume; survives image bumps):
+
+```bash
+docker compose exec mcp-proxy sh -c \
+  'MAIL_MCP_VERSION=v0.4.5 MAIL_MCP_INSTALL_DEST=/data/mail-mcp sh /app/docker/install-mail-mcp-release.sh'
+```
+
+Change **`MAIL_MCP_VERSION`** to any existing **[GitHub release tag](https://github.com/tecnologicachile/mail-mcp/releases)**. ARM64 Linux images have **no** upstream prebuilt binary; use **`platform: linux/amd64`** for the service or install manually.
 
 ---
 ### 🌐 Open

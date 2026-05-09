@@ -1,7 +1,11 @@
 # Local dev / Portainer with build:. — CI can SSH to this clone and run compose build (see .github/workflows/deploy.yml).
 services:
   mcp-proxy:
-    build: .
+    build:
+      context: .
+      args:
+        # Pin https://github.com/tecnologicachile/mail-mcp Linux amd64 release baked into /opt/mail-mcp/
+        MAIL_MCP_VERSION: ${MAIL_MCP_VERSION:-v0.4.5}
     # Local tag only — not on Docker Hub. Prevents `compose pull` / Portainer “Pull” from hitting the registry.
     image: mcp-proxy:latest
     pull_policy: never

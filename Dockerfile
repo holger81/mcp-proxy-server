@@ -1,10 +1,14 @@
 # MCP Proxy — runtime image (Python deps + app + static admin assets).
 FROM python:3.12-slim-bookworm
 
+# GitHub release tag for https://github.com/tecnologicachile/mail-mcp (Linux amd64 binary only).
+ARG MAIL_MCP_VERSION=v0.4.5
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    MCP_PROXY_STATIC_ROOT=/app/static
+    MCP_PROXY_STATIC_ROOT=/app/static \
+    MAIL_MCP_VERSION=${MAIL_MCP_VERSION}
 
 WORKDIR /app
 
@@ -27,6 +31,7 @@ RUN apt-get update \
         curl \
         gosu \
         tzdata \
+        xz-utils \
     && curl -fsSL https://deb.nodesource.com/setup_24.x -o /tmp/nodesource_setup.sh \
     && bash /tmp/nodesource_setup.sh \
     && apt-get install -y --no-install-recommends nodejs \
@@ -35,6 +40,23 @@ RUN apt-get update \
 
 RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
+
+# mail-mcp (Rust): prebuilt x86_64-unknown-linux-gnu only. Omit on non-amd64 builds (no upstream asset).
+RUN mkdir -p /opt/mail-mcp \
+    && ARCH="$(dpkg --print-architecture)" \
+    && if [ "$ARCH" = "amd64" ]; then \
+      curl -fsSL \
+        "https://github.com/tecnologicachile/mail-mcp/releases/download/${MAIL_MCP_VERSION}/mail-mcp-x86_64-unknown-linux-gnu.tar.xz" \
+        | tar -xJf - -C /tmp \
+      && install -m 0755 "/tmp/mail-mcp-x86_64-unknown-linux-gnu/mail-mcp" /opt/mail-mcp/mail-mcp \
+      && rm -rf "/tmp/mail-mcp-x86_64-unknown-linux-gnu"; \
+    else \
+      echo "mail-mcp: no GitHub Linux binary for ${ARCH} (upstream ships amd64 only). Use linux/amd64 image or install manually under /data/mail-mcp/." \
+        > /opt/mail-mcp/README.txt; \
+    fi
+
+COPY docker/mail-mcp-runner.sh /usr/local/bin/mail-mcp
+RUN chmod +x /usr/local/bin/mail-mcp /app/docker/install-mail-mcp-release.sh
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh \
