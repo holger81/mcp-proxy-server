@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -141,6 +142,116 @@ def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path 
             best_score = score
             best = pj.parent
     return best
+
+
+def _bin_entry_pairs(pkg_dir: Path) -> list[tuple[str, str]]:
+    """Parse package.json ``bin`` into (cli_name, relative_script_path)."""
+    pj = pkg_dir / "package.json"
+    if not pj.is_file():
+        return []
+    try:
+        data = json.loads(pj.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    bin_field = data.get("bin")
+    out: list[tuple[str, str]] = []
+    if isinstance(bin_field, str):
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            cli = name.split("/", 1)[-1]
+            out.append((cli, bin_field))
+        return out
+    if isinstance(bin_field, dict):
+        for k, v in bin_field.items():
+            if isinstance(k, str) and isinstance(v, str):
+                out.append((k, v))
+    return out
+
+
+def _shebang_mentions_node(script: Path) -> bool:
+    try:
+        head = script.read_bytes()[:120]
+    except OSError:
+        return False
+    if not head.startswith(b"#!"):
+        return False
+    return b"node" in head.lower()
+
+
+def _pick_bin_entry(
+    pairs: list[tuple[str, str]],
+    expected_bins: list[str],
+    guess: str,
+) -> tuple[str, str] | None:
+    if not pairs:
+        return None
+    gg = guess.replace("_", "-")
+
+    def norm(s: str) -> str:
+        return s.replace("_", "-")
+
+    for eb in expected_bins:
+        for name, rel in pairs:
+            if norm(name) == norm(eb):
+                return (name, rel)
+    for name, rel in pairs:
+        nn = norm(name)
+        if nn == gg or gg.endswith(nn) or gg.endswith("-" + nn):
+            return (name, rel)
+    return pairs[0]
+
+
+def _argv_for_cli_script(script: Path) -> list[str] | None:
+    """Run a CLI script: prefer ``node`` for JS; otherwise executable path."""
+    script = script.resolve()
+    if not script.is_file():
+        return None
+    suf = script.suffix.lower()
+    node = shutil.which("node")
+    if suf in (".js", ".mjs", ".cjs") or _shebang_mentions_node(script):
+        if not node:
+            return None
+        return [node, str(script)]
+    if os.access(script, os.X_OK):
+        return [str(script)]
+    if node:
+        return [node, str(script)]
+    return None
+
+
+def _bin_shim_resolves(shim: Path) -> bool:
+    try:
+        if shim.is_file():
+            return True
+        return bool(shim.is_symlink() and shim.exists())
+    except OSError:
+        return False
+
+
+def _resolve_stdio_argv(
+    prefix: Path,
+    pkg_dir: Path | None,
+    *,
+    pick: str | None,
+    expected_bins: list[str],
+    guess: str,
+) -> list[str] | None:
+    """Resolve argv: ``node_modules/.bin`` shim if present, else ``node`` + built ``bin`` target."""
+    bd = _bin_dir(prefix)
+    if pick:
+        shim = bd / pick
+        if _bin_shim_resolves(shim):
+            return [str(shim.resolve())]
+    if pkg_dir is None or not pkg_dir.is_dir():
+        return None
+    pairs = _bin_entry_pairs(pkg_dir)
+    chosen = _pick_bin_entry(pairs, expected_bins, guess)
+    if chosen is None:
+        return None
+    _, rel = chosen
+    return _argv_for_cli_script(pkg_dir / rel)
 
 
 def _read_package_bin_names(pkg_dir: Path) -> list[str]:
@@ -295,7 +406,7 @@ class NpmInstallResult:
     log: str
     prefix_path: str
     new_binaries: list[str]
-    suggested_command: str | None
+    suggested_argv: list[str] | None
 
 
 def install_npm_prefix(
@@ -316,7 +427,7 @@ def install_npm_prefix(
             log="npm executable not found (Node.js/npm must be installed in the image).",
             prefix_path=str(target),
             new_binaries=[],
-            suggested_command=None,
+            suggested_argv=None,
         )
 
     target.mkdir(parents=True, exist_ok=True)
@@ -387,7 +498,12 @@ def install_npm_prefix(
     after = _list_bin_names(_bin_dir(target))
     new_bins = sorted((after - before) - _NPM_NOISE)
     all_bins = sorted(after - _NPM_NOISE)
-    suggested: str | None = None
+
+    pkg_dir_for_cli: Path | None = build_prefix
+    if pkg_dir_for_cli is None and ok:
+        pkg_dir_for_cli = _package_lock_installed_dir(target, spec)
+    if ok and not expected_bins and pkg_dir_for_cli is not None:
+        expected_bins = _read_package_bin_names(pkg_dir_for_cli)
 
     def _pick_expected(cands: list[str]) -> str | None:
         if not cands:
@@ -401,15 +517,19 @@ def install_npm_prefix(
     if pick is None:
         # Reinstalling an already-present package may add no *new* binaries.
         pick = _pick_expected(all_bins) or _pick_bin(all_bins, guess)
-    if pick:
-        p = (_bin_dir(target) / pick).resolve()
-        suggested = str(p)
-    elif expected_bins:
-        # We know which bin should exist but npm didn't link it; expose a helpful hint.
+
+    suggested_argv = _resolve_stdio_argv(
+        target,
+        pkg_dir_for_cli,
+        pick=pick,
+        expected_bins=expected_bins,
+        guess=guess,
+    )
+    if suggested_argv is None and expected_bins:
         log += (
-            "\nExpected npm binaries were declared by the package but not found under node_modules/.bin: "
+            "\nCould not resolve a runnable CLI for declared npm bin(s) "
             + ", ".join(expected_bins)
-            + "\n"
+            + " (no shim under node_modules/.bin and no built script path found).\n"
         )
 
     return NpmInstallResult(
@@ -417,5 +537,5 @@ def install_npm_prefix(
         log=log,
         prefix_path=str(target.resolve()),
         new_binaries=new_bins,
-        suggested_command=suggested,
+        suggested_argv=suggested_argv,
     )

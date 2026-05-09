@@ -245,7 +245,8 @@ async def register_stdio_package(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         log = result.log
-        suggested = result.suggested_command
+        suggested_cmd = result.suggested_command
+        suggested_argv = None
         install_ok = result.ok
     else:
         if not settings.allow_npm_install:
@@ -262,7 +263,8 @@ async def register_stdio_package(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         log = result.log
-        suggested = result.suggested_command
+        suggested_cmd = None
+        suggested_argv = result.suggested_argv
         install_ok = result.ok
 
     if not install_ok:
@@ -271,16 +273,24 @@ async def register_stdio_package(
             "registered": False,
             "log": log,
             "detail": "Install command failed (see log).",
-            "suggested_command": suggested,
+            "suggested_command": suggested_cmd,
+            "suggested_argv": suggested_argv,
         }
 
-    if not suggested:
+    command_argv: list[str] | None
+    if body.ecosystem == "pypi":
+        command_argv = [suggested_cmd] if suggested_cmd else None
+    else:
+        command_argv = suggested_argv
+
+    if not command_argv:
         return {
             "ok": False,
             "registered": False,
             "log": log,
-            "detail": "Install succeeded but no new CLI binary was detected under bin/ or node_modules/.bin.",
-            "suggested_command": None,
+            "detail": "Install succeeded but no runnable CLI was detected (venv bin or npm argv).",
+            "suggested_command": suggested_cmd,
+            "suggested_argv": suggested_argv,
         }
 
     existing = store.get(body.server_id)
@@ -302,7 +312,7 @@ async def register_stdio_package(
         enabled=True,
         display_name=body.display_name,
         llm_context=body.llm_context,
-        command=suggested,
+        command=command_argv,
         cwd=None,
         env=env,
     )
@@ -322,7 +332,8 @@ async def register_stdio_package(
         "ok": True,
         "registered": True,
         "log": log,
-        "suggested_command": suggested,
+        "suggested_command": suggested_cmd,
+        "suggested_argv": suggested_argv,
         "server": server.model_dump(mode="json"),
     }
 
@@ -381,6 +392,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
             return install_into_venv(settings.data_dir, server_id, upgrade_spec)
 
         result = await asyncio.to_thread(run_pip)
+        argv = [result.suggested_command] if result.suggested_command else None
     else:
         if not settings.allow_npm_install:
             raise HTTPException(
@@ -392,6 +404,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
             return install_npm_prefix(settings.data_dir, server_id, upgrade_spec)
 
         result = await asyncio.to_thread(run_npm)
+        argv = result.suggested_argv
 
     if not result.ok:
         return {
@@ -401,8 +414,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
             "detail": "Upgrade install failed.",
         }
 
-    suggested = result.suggested_command
-    if not suggested:
+    if not argv:
         if not server.command:
             return {
                 "ok": False,
@@ -411,7 +423,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
                 "detail": "Upgrade succeeded but command could not be determined.",
             }
     else:
-        server.command = [suggested]
+        server.command = argv
     store.update(server_id, server)
     set_stdio_meta(
         request.app.state.settings.data_dir,

@@ -1090,8 +1090,13 @@ def build_proxy_mcp_server(
                         type="text", text=_json_discovery(payload, settings)
                     )
                 ]
-            suggested = result.suggested_command
-            if not suggested:
+            if ecosystem == "pypi":
+                suggested_argv = (
+                    [result.suggested_command] if result.suggested_command else None
+                )
+            else:
+                suggested_argv = result.suggested_argv
+            if not suggested_argv:
                 payload = {
                     "ok": False,
                     "registered": False,
@@ -1128,7 +1133,7 @@ def build_proxy_mcp_server(
                 enabled=True,
                 display_name=display_name,
                 llm_context=llm_context,
-                command=[suggested],
+                command=suggested_argv,
                 cwd=None,
                 env=env,
             )
@@ -1222,8 +1227,14 @@ def build_proxy_mcp_server(
                         type="text", text=_json_discovery(payload, settings)
                     )
                 ]
-            if result.suggested_command:
-                srv.command = [result.suggested_command]
+            if ecosystem == "pypi":
+                new_argv = (
+                    [result.suggested_command] if result.suggested_command else None
+                )
+            else:
+                new_argv = result.suggested_argv
+            if new_argv:
+                srv.command = new_argv
                 store.update(sid, srv)
             set_stdio_meta(settings.data_dir, sid, ecosystem, upgrade_spec)
             payload = {
