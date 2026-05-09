@@ -500,7 +500,8 @@
             <label><input type="checkbox" id="e-node-inspect" /> Enable Node.js inspector (<code>--inspect</code>)</label>
             <span class="hint"
               >Only when the executable is <code>node</code>. Injects <code>--inspect=0.0.0.0:&lt;port&gt;</code> after
-              <code>node</code>. Map the same TCP port in <code>docker-compose.yml</code> (see example comments there).</span
+              <code>node</code>. Default Compose maps <strong>9229–9239</strong> host↔container (Node inspector convention); pick
+              a port in that range unless you customize <code>ports:</code>.</span
             >
             <label><input type="checkbox" id="e-node-inspect-brk" /> Pause at startup (<code>--inspect-brk</code>)</label>
             <label for="e-node-inspect-port">Inspector port (inside container)</label>
@@ -747,7 +748,7 @@
             const p = typeof s.stdio_node_inspect_port === "number" ? s.stdio_node_inspect_port : 9229;
             const kind = s.stdio_node_inspect_brk ? "inspect-brk" : "inspect";
             line +=
-              "\n→ spawns with --" + kind + "=0.0.0.0:" + p + " (publish " + p + ":" + p + " in compose)";
+              "\n→ spawns with --" + kind + "=0.0.0.0:" + p + " · attach at localhost:" + p + " (default compose maps 9229–9239)";
           }
           return line;
         }

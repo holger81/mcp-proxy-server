@@ -241,7 +241,7 @@ Both admin endpoints above require an **admin session**.
 
 For **stdio** servers whose command starts with `node`, the admin **Edit server** form can enable **Node inspector** (injects `--inspect=0.0.0.0:<port>` or `--inspect-brk`). The listen address is always `0.0.0.0` so you can attach from the host when using Docker.
 
-Map the **same port** on the host in `docker-compose.yml`, for example `- "9230:9230"`, then attach with Chrome (`chrome://inspect`) or your IDE’s **Attach to Node** using `localhost:<port>`.
+With the bundled `docker-compose.yml`, **`9229`–`9239` are published 1:1** (Node’s usual inspector defaults and neighbors). Pick any port in that range under **Admin → Edit server**, then attach with Chrome (`chrome://inspect`) or your IDE **Attach to Node** at `localhost:<port>`. Omit the range mapping if you do not run debuggers (or override `ports:` in `docker-compose.override.yml`).
 
 ---
 ## 🔐 Authentication

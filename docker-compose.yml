@@ -7,12 +7,9 @@ services:
     pull_policy: never
     ports:
       - "2222:8080"
-      # Node.js stdio MCP debugging: match Admin → Edit server → "Node inspector port" (same number both sides).
-      # Example:
-      # - "9230:9230"
-      # Or several servers / ports:
-      # - "9230:9230"
-      # - "9231:9231"
+      # Node.js --inspect convention: official default is 9229; additional debuggers typically use adjacent ports.
+      # Publish host 9229–9239 ↔ container 9229–9239 so Admin “inspector port” matches localhost without per-server edits.
+      - "9229-9239:9229-9239/tcp"
     volumes:
       - mcp-proxy-data:/data
       # Match container log timestamps to the host clock (same pattern as Frigate / other stacks).
