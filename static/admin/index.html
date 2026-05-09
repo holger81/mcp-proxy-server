@@ -766,10 +766,14 @@
           const spec = data.package_spec || "—";
           const cur = data.installed_version || "?";
           const latest = data.latest_version || "?";
+          const verPart =
+            data.installed_npm_name && data.installed_version
+              ? data.installed_npm_name + " " + cur
+              : cur;
           if (data.update_available) {
-            return eco + " " + spec + "\n" + cur + " -> " + latest + " (update available)";
+            return eco + " " + spec + "\n" + verPart + " -> " + latest + " (update available)";
           }
-          return eco + " " + spec + "\n" + cur + " (latest " + latest + ")";
+          return eco + " " + spec + "\n" + verPart + " (latest " + latest + ")";
         }
 
         async function upgradeStdioServer(serverId, pkgPre) {

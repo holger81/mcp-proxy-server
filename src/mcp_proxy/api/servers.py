@@ -1,6 +1,7 @@
 import asyncio
 import json
 import subprocess
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -14,7 +15,11 @@ from mcp_proxy.models import (
     coerce_flat_os_env_mapping,
     validate_slug_id,
 )
-from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
+from mcp_proxy.npm_install import (
+    _package_lock_installed_dir,
+    install_npm_prefix,
+    validate_npm_package_spec,
+)
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
@@ -50,6 +55,35 @@ def _npm_package_name(spec: str) -> str:
     return s.split("@", 1)[0]
 
 
+def _npm_registry_folder_name(package_name: str) -> Path:
+    """Path segments under node_modules for a registry package name (e.g. ``@scope/pkg``)."""
+    if package_name.startswith("@") and "/" in package_name:
+        scope, rest = package_name.split("/", 1)
+        return Path(scope) / rest
+    return Path(package_name)
+
+
+def _resolve_npm_package_json_path(
+    data_dir: Path, server_id: str, package_spec: str
+) -> Path | None:
+    """Locate installed ``package.json`` for registry, tarball, or git npm specs."""
+    prefix = (data_dir / "npm" / server_id).resolve()
+    spec = package_spec.strip()
+    pkg_name = _npm_package_name(spec)
+
+    if not spec.startswith(("http://", "https://", "github:", "git+")):
+        cand = prefix / "node_modules" / _npm_registry_folder_name(pkg_name) / "package.json"
+        if cand.is_file():
+            return cand
+
+    installed = _package_lock_installed_dir(prefix, spec)
+    if installed is not None:
+        pj = installed / "package.json"
+        if pj.is_file():
+            return pj
+    return None
+
+
 def _pypi_dist_from_spec(spec: str) -> str:
     s = spec.strip()
     for sep in ("===", "==", ">=", "<=", "!=", "~=", ">", "<"):
@@ -74,25 +108,32 @@ def _status_from_meta(
     error: str | None = None
     settings = request.app.state.settings
 
+    installed_npm_name: str | None = None
     try:
         if ecosystem == "npm":
-            package_json = (
-                settings.data_dir
-                / "npm"
-                / server_id
-                / "node_modules"
-                / package_name
-                / "package.json"
+            package_json = _resolve_npm_package_json_path(
+                settings.data_dir, server_id, package_spec
             )
-            if package_json.is_file():
+            if package_json is not None and package_json.is_file():
                 pkg = json.loads(package_json.read_text(encoding="utf-8"))
                 v = pkg.get("version")
                 installed_version = str(v) if isinstance(v, str) and v.strip() else None
+                n = pkg.get("name")
+                if isinstance(n, str) and n.strip():
+                    installed_npm_name = n.strip()
+
+            spec_stripped = package_spec.strip()
+            # Query "latest" using the same shape npm install uses (registry name vs URL/git).
+            view_target = (
+                spec_stripped
+                if spec_stripped.startswith(("http://", "https://", "github:", "git+"))
+                else package_name
+            )
             proc = subprocess.run(
-                ["npm", "view", package_name, "version", "--json"],
+                ["npm", "view", view_target, "version", "--json"],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=45,
             )
             if proc.returncode == 0:
                 out = (proc.stdout or "").strip()
@@ -102,6 +143,9 @@ def _status_from_meta(
                     parsed = out.strip('"')
                 if isinstance(parsed, str):
                     latest_version = parsed
+            elif installed_version:
+                # Tarball/git installs may block npm view (offline); avoid bogus "? (latest ?)".
+                latest_version = installed_version
             else:
                 err = (proc.stderr or proc.stdout or "").strip()
                 error = err or "failed to query npm registry"
@@ -141,6 +185,7 @@ def _status_from_meta(
         "ecosystem": ecosystem,
         "package_spec": package_spec,
         "package_name": package_name,
+        "installed_npm_name": installed_npm_name,
         "installed_version": installed_version,
         "latest_version": latest_version,
         "update_available": update_available,
