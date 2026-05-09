@@ -131,19 +131,19 @@ This gets:
 
 Built-in UI at `/admin`:
 
-- Add MCP servers (stdio / HTTP / SSE)
+- Add MCP servers: PyPI/npm install, **manual stdio** (raw command / PATH binary), or HTTP / SSE
 - Assign domains
 - Add LLM context
 - Create API tokens
 - Inspect tool exposure
 - Preview what the LLM sees
 - View logs
-- **Mail MCP** tab: download or update the mail-mcp Linux binary into `/data/mail-mcp/` (amd64 / Docker image)
+- **Explore servers**: PyPI/npm **Upgrade**, or **Update mail-mcp binary** for manual stdio servers whose command is `mail-mcp` (writes into `/data/mail-mcp/` on amd64 Docker)
 
 ---
 ### 🔌 5. Supports all MCP server types
 
-- ✅ Local (stdio) — PyPI / npm
+- ✅ Local (stdio) — PyPI / npm, or **manual** command (no package install)
 - ✅ Remote (HTTP / streamable)
 - ✅ Legacy SSE
 
@@ -176,9 +176,10 @@ docker compose up -d --build
 
 The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** (Rust) for **linux/amd64** only: **`/usr/local/bin/mail-mcp`** runs **`/data/mail-mcp/mail-mcp`** if you installed one there, otherwise **`/opt/mail-mcp/mail-mcp`** from the release chosen at build time (`MAIL_MCP_VERSION`: a tag like **v0.4.5**, or **`latest`** to follow GitHub’s “latest release” asset URL — not a git tag).
 
-**Register in Admin → Add server → stdio:** command **`mail-mcp`** (or **`/usr/local/bin/mail-mcp`**) plus whatever env that server expects.
+**Register mail-mcp:** Admin → **Register manual stdio MCP** (command **`mail-mcp`** or **`/usr/local/bin/mail-mcp`**) and set env vars. Or use MCP **`mcp-tools-admin/registerManualStdioServer`**.
 
-**Update mail-mcp without rebuilding the proxy image** (writes into the volume; survives image bumps):
+**Update the mail-mcp binary** without rebuilding the proxy image (writes into the volume; survives image bumps): Admin → **Explore servers** → **Update mail-mcp binary** on that row, or:
+
 
 ```bash
 docker compose exec mcp-proxy sh -c \

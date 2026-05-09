@@ -241,7 +241,7 @@
       Config: <code>/data/config/servers.json</code>, domains: <code>/data/config/domains.json</code>. Each server
       belongs to a <strong>domain</strong> (unique id + label) for the public MCP surface: clients only see
       <code>searchToolsForDomain</code> (query or explicit <code>listAll</code>, paginated), <code>searchTool</code>,
-      and <code>callTool</code> — not every upstream tool at once. Stdio installs use PyPI/npm under <code>/data/venvs</code> or <code>/data/npm</code>.
+      and <code>callTool</code> — not every upstream tool at once. Package stdio uses PyPI/npm under <code>/data/venvs</code> or <code>/data/npm</code>; manual stdio uses commands already on <code>PATH</code>.
     </p>
     <p><a href="/api/health"><code>/api/health</code></a> · <a href="/docs"><code>API docs</code></a></p>
 
@@ -253,7 +253,6 @@
       <button type="button" class="tab" data-tab="domains" role="tab" aria-selected="false">Domains</button>
       <button type="button" class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
       <button type="button" class="tab" data-tab="llm" role="tab" aria-selected="false">LLM preview</button>
-      <button type="button" class="tab" data-tab="mailmcp" role="tab" aria-selected="false">Mail MCP</button>
       <button type="button" class="secondary push-end hidden" id="btn-logout">Log out</button>
     </nav>
 
@@ -285,6 +284,36 @@
         <pre id="wiz-log" class="hidden" style="margin-top: 0.75rem; max-height: 16rem; overflow: auto"></pre>
       </fieldset>
       <div id="wiz-msg"></div>
+
+      <h2>Register manual stdio MCP</h2>
+      <form id="add-stdio-manual-form">
+        <fieldset>
+          <legend>Binary or CLI on PATH</legend>
+          <p class="hint">
+            No PyPI/npm install step — for executables already in the container or on <code>PATH</code> (e.g.
+            <code>mail-mcp</code>). Equivalent to <code>POST /api/servers</code> with <code>type: stdio</code>.
+          </p>
+          <label for="ms-id">Server id <span class="hint">(slug)</span></label>
+          <input id="ms-id" name="ms-id" type="text" required autocomplete="off" placeholder="mail-mcp" />
+          <label for="ms-domain">Domain</label>
+          <select id="ms-domain" aria-label="Domain for manual stdio server"></select>
+          <div class="row">
+            <label><input type="checkbox" id="ms-enabled" checked /> Enabled</label>
+          </div>
+          <label for="ms-command">Command <span class="hint">(shell-style; quoted segments allowed)</span></label>
+          <input id="ms-command" type="text" required autocomplete="off" placeholder="mail-mcp" />
+          <label for="ms-cwd">Working directory <span class="hint">(optional)</span></label>
+          <input id="ms-cwd" type="text" autocomplete="off" />
+          <label for="ms-display">Display name <span class="hint">(optional)</span></label>
+          <input id="ms-display" type="text" autocomplete="off" />
+          <label for="ms-llm">LLM / instructions <span class="hint">(optional)</span></label>
+          <textarea id="ms-llm" rows="3"></textarea>
+          <label for="ms-env">Environment <span class="hint">(JSON object; scalars only)</span></label>
+          <textarea id="ms-env" placeholder="{}">{}</textarea>
+          <button type="submit">Register manual stdio</button>
+        </fieldset>
+      </form>
+      <div id="stdio-manual-msg"></div>
 
       <h2>Add remote MCP (HTTP)</h2>
       <form id="add-http-form">
@@ -330,7 +359,10 @@
       <p class="hint">
         <strong>Tools</strong> → <code>tools/list</code>. <strong>Resources</strong> → <code>resources/list</code> (URIs /
         roots). <strong>Prompts</strong> → <code>prompts/list</code> (templates). <strong>Capabilities</strong> → MCP
-        <code>initialize</code> result (protocol features / “signals” from the handshake).
+        <code>initialize</code> result (protocol features / “signals” from the handshake). PyPI/npm stdio installs show
+        package status and <strong>Upgrade</strong>. Manual stdio shows “Not managed”; if the executable is
+        <code>mail-mcp</code>, use <strong>Update mail-mcp binary</strong> (writes <code>/data/mail-mcp/</code> on amd64
+        Docker — same as <code>POST /api/mail-mcp/update</code>).
       </p>
       <div id="list-wrap">
         <p id="list-empty" class="hint hidden">No servers yet. Use the <em>Register server</em> tab.</p>
@@ -463,23 +495,6 @@
       <p id="llm-empty" class="hint">Open this tab to load the preview.</p>
     </section>
 
-    <section id="panel-mailmcp" class="hidden" role="tabpanel">
-      <h2>mail-mcp (Rust binary)</h2>
-      <p class="hint">
-        Downloads the Linux amd64 release from GitHub into <code>/data/mail-mcp/</code>. The wrapper command
-        <code>mail-mcp</code> prefers that copy over the image-baked binary. Needs outbound HTTPS from the container.
-      </p>
-      <button type="button" class="secondary small" id="mailmcp-refresh" style="margin-top: 0.5rem">Refresh status</button>
-      <div id="mailmcp-msg"></div>
-      <pre id="mailmcp-status-pre" class="hidden" style="margin-top: 0.75rem; max-height: 14rem; overflow: auto"></pre>
-      <p id="mailmcp-status-empty" class="hint">Open this tab to load.</p>
-      <label for="mailmcp-version">Release tag or <code>latest</code></label>
-      <input id="mailmcp-version" type="text" autocomplete="off" placeholder="latest or v0.4.5" value="latest" />
-      <p class="hint">Use a tag from the upstream repo’s releases page, or <code>latest</code> for GitHub’s current release.</p>
-      <button type="button" id="mailmcp-update">Download and install</button>
-      <pre id="mailmcp-update-out" class="hidden" style="margin-top: 0.75rem; max-height: 12rem; overflow: auto"></pre>
-    </section>
-
     <dialog id="edit-dialog" aria-labelledby="edit-dialog-title">
       <div class="dialog-inner">
         <h2 id="edit-dialog-title">Edit server</h2>
@@ -591,7 +606,7 @@
         }
 
         function fillAllDomainSelects() {
-          const selIds = ["wiz-domain", "f-domain", "e-domain"];
+          const selIds = ["wiz-domain", "ms-domain", "f-domain", "e-domain"];
           for (const sid of selIds) {
             const el = document.getElementById(sid);
             if (!el) continue;
@@ -630,7 +645,6 @@
         const panelDomains = document.getElementById("panel-domains");
         const panelLogs = document.getElementById("panel-logs");
         const panelLlm = document.getElementById("panel-llm");
-        const panelMailMcp = document.getElementById("panel-mailmcp");
         const liveBody = document.getElementById("live-body");
         const liveTable = document.getElementById("live-table");
         const liveEmpty = document.getElementById("live-empty");
@@ -806,6 +820,17 @@
             return eco + " " + spec + "\n" + verPart + " -> " + latest + " (update available)";
           }
           return eco + " " + spec + "\n" + verPart + " (latest " + latest + ")";
+        }
+
+        function isMailMcpCommand(s) {
+          const c = s.command;
+          if (!Array.isArray(c) || !c.length) return false;
+          const base = String(c[0])
+            .replace(/\\/g, "/")
+            .split("/")
+            .pop()
+            .toLowerCase();
+          return base === "mail-mcp" || base === "mail-mcp.exe";
         }
 
         async function upgradeStdioServer(serverId, pkgPre) {
@@ -1029,32 +1054,14 @@
             editBtn.textContent = "Edit";
             editBtn.addEventListener("click", () => openEdit(s));
             tdAct.appendChild(editBtn);
+            let stdioWrap = null;
             if (s.type === "stdio") {
-              const checkBtn = document.createElement("button");
-              checkBtn.type = "button";
-              checkBtn.className = "small secondary";
-              checkBtn.textContent = "Check update";
-              checkBtn.addEventListener("click", async () => {
-                pkgPre.textContent = "Checking…";
-                const st = await fetchStdioStatus(s.id);
-                if (!st.ok) {
-                  pkgPre.textContent = "Check failed: " + st.detail;
-                  return;
-                }
-                pkgPre.textContent = formatStdioStatus(st.data);
-              });
-              tdAct.appendChild(checkBtn);
-
-              const upBtn = document.createElement("button");
-              upBtn.type = "button";
-              upBtn.className = "small secondary";
-              upBtn.textContent = "Upgrade";
-              upBtn.addEventListener("click", async () => {
-                if (!confirm("Upgrade stdio server “" + s.id + "” to latest package version?")) return;
-                await upgradeStdioServer(s.id, pkgPre);
-                loadServers();
-              });
-              tdAct.appendChild(upBtn);
+              stdioWrap = document.createElement("span");
+              stdioWrap.style.display = "inline-flex";
+              stdioWrap.style.flexWrap = "wrap";
+              stdioWrap.style.gap = "0.25rem";
+              stdioWrap.style.alignItems = "center";
+              tdAct.appendChild(stdioWrap);
             }
             const del = document.createElement("button");
             del.type = "button";
@@ -1072,13 +1079,79 @@
             tdAct.appendChild(del);
             tr.append(tdId, tdDom, tdType, tdHttp, tdTgt, tdPkg, tdIn, tdAct);
             tbody.appendChild(tr);
-            if (s.type === "stdio") {
+            if (s.type === "stdio" && stdioWrap) {
               fetchStdioStatus(s.id).then((st) => {
                 if (!st.ok) {
                   pkgPre.textContent = "Check failed: " + st.detail;
                   return;
                 }
                 pkgPre.textContent = formatStdioStatus(st.data);
+                stdioWrap.replaceChildren();
+                const managed = st.data && st.data.managed;
+                if (managed) {
+                  const checkBtn = document.createElement("button");
+                  checkBtn.type = "button";
+                  checkBtn.className = "small secondary";
+                  checkBtn.textContent = "Check update";
+                  checkBtn.addEventListener("click", async () => {
+                    pkgPre.textContent = "Checking…";
+                    const st2 = await fetchStdioStatus(s.id);
+                    if (!st2.ok) {
+                      pkgPre.textContent = "Check failed: " + st2.detail;
+                      return;
+                    }
+                    pkgPre.textContent = formatStdioStatus(st2.data);
+                  });
+                  stdioWrap.appendChild(checkBtn);
+                  const upBtn = document.createElement("button");
+                  upBtn.type = "button";
+                  upBtn.className = "small secondary";
+                  upBtn.textContent = "Upgrade";
+                  upBtn.addEventListener("click", async () => {
+                    if (!confirm("Upgrade stdio server “" + s.id + "” to latest package version?")) return;
+                    await upgradeStdioServer(s.id, pkgPre);
+                    loadServers();
+                  });
+                  stdioWrap.appendChild(upBtn);
+                } else if (isMailMcpCommand(s)) {
+                  const ub = document.createElement("button");
+                  ub.type = "button";
+                  ub.className = "small secondary";
+                  ub.textContent = "Update mail-mcp binary";
+                  ub.addEventListener("click", async () => {
+                    const ver = prompt("mail-mcp release tag or latest:", "latest");
+                    if (ver === null) return;
+                    const vt = ver.trim();
+                    if (!vt) {
+                      alert("Enter a version or latest.");
+                      return;
+                    }
+                    pkgPre.textContent = "Downloading mail-mcp…";
+                    const res = await apiFetch(apiMailMcp + "/update", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ version: vt }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      let detail = "";
+                      const d = data.detail;
+                      if (typeof d === "string") detail = d;
+                      else if (d && typeof d === "object" && d.output) detail = d.output;
+                      else detail = JSON.stringify(data, null, 2);
+                      pkgPre.textContent = "mail-mcp update failed.";
+                      inspectOut.classList.remove("hidden");
+                      inspectOut.textContent = detail;
+                      return;
+                    }
+                    const baseLine = formatStdioStatus(st.data);
+                    pkgPre.textContent =
+                      baseLine + "\n\n--- install log ---\n" + (data.output || "").trim();
+                    inspectOut.classList.remove("hidden");
+                    inspectOut.textContent = JSON.stringify(data, null, 2);
+                  });
+                  stdioWrap.appendChild(ub);
+                }
               });
             }
           }
@@ -1255,10 +1328,6 @@
         const logsEmpty = document.getElementById("logs-empty");
         const adminLlmPre = document.getElementById("admin-llm-preview");
         const llmEmpty = document.getElementById("llm-empty");
-        const mailmcpMsg = document.getElementById("mailmcp-msg");
-        const mailmcpStatusPre = document.getElementById("mailmcp-status-pre");
-        const mailmcpStatusEmpty = document.getElementById("mailmcp-status-empty");
-        const mailmcpUpdateOut = document.getElementById("mailmcp-update-out");
 
         let logsPollId = null;
         const LOGS_POLL_MS = 2500;
@@ -1388,70 +1457,9 @@
           adminLlmPre.textContent = JSON.stringify(data, null, 2);
         }
 
-        async function loadMailMcpStatus() {
-          mailmcpMsg.innerHTML = "";
-          mailmcpStatusEmpty.classList.remove("hidden");
-          mailmcpStatusEmpty.textContent = "Loading…";
-          mailmcpStatusPre.classList.add("hidden");
-          const res = await apiFetch(apiMailMcp + "/status");
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            mailmcpStatusEmpty.textContent =
-              typeof data.detail === "string" ? data.detail : "Failed to load status (" + res.status + ").";
-            return;
-          }
-          if (data.install_script_present === false) {
-            mailmcpMsg.innerHTML =
-              '<div class="msg err">Install script not found on this host. Use the Docker image, or run <code>docker/…/install-mail-mcp-release.sh</code> manually.</div>';
-          } else if (data.amd64_linux_binary_supported === false) {
-            mailmcpMsg.innerHTML =
-              '<div class="msg err">This CPU architecture has no upstream Linux amd64 tarball. Use <code>platform: linux/amd64</code> in Compose, or place a binary under <code>' +
-              (data.volume_binary_path || "/data/mail-mcp/mail-mcp") +
-              "</code>.</div>";
-          }
-          mailmcpStatusEmpty.classList.add("hidden");
-          mailmcpStatusPre.classList.remove("hidden");
-          mailmcpStatusPre.textContent = JSON.stringify(data, null, 2);
-        }
-
         document.getElementById("logs-refresh").addEventListener("click", () => loadLogs({ silent: false }));
         document.getElementById("llm-refresh").addEventListener("click", () => loadLlmPreview());
         document.getElementById("live-refresh").addEventListener("click", () => loadLive({ silent: false }));
-        document.getElementById("mailmcp-refresh").addEventListener("click", () => loadMailMcpStatus());
-        document.getElementById("mailmcp-update").addEventListener("click", async () => {
-          mailmcpMsg.innerHTML = "";
-          mailmcpUpdateOut.classList.add("hidden");
-          mailmcpUpdateOut.textContent = "";
-          const ver = document.getElementById("mailmcp-version").value.trim();
-          if (!ver) {
-            mailmcpMsg.innerHTML = '<div class="msg err">Enter a version or <code>latest</code>.</div>';
-            return;
-          }
-          mailmcpMsg.innerHTML = '<div class="msg ok">Downloading…</div>';
-          const res = await apiFetch(apiMailMcp + "/update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ version: ver }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            let detail = "";
-            const d = data.detail;
-            if (typeof d === "string") detail = d;
-            else if (d && typeof d === "object") {
-              if (d.output) detail = d.output;
-              else detail = JSON.stringify(d, null, 2);
-            } else detail = "Request failed (" + res.status + ").";
-            mailmcpMsg.innerHTML = '<div class="msg err">Update failed.</div>';
-            mailmcpUpdateOut.classList.remove("hidden");
-            mailmcpUpdateOut.textContent = detail;
-            return;
-          }
-          mailmcpMsg.innerHTML = '<div class="msg ok">Installed.</div>';
-          mailmcpUpdateOut.classList.remove("hidden");
-          mailmcpUpdateOut.textContent = data.output || "(no script output)";
-          await loadMailMcpStatus();
-        });
 
         document.querySelectorAll("button.tab").forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1468,7 +1476,6 @@
             panelDomains.classList.toggle("hidden", tab !== "domains");
             panelLogs.classList.toggle("hidden", tab !== "logs");
             panelLlm.classList.toggle("hidden", tab !== "llm");
-            panelMailMcp.classList.toggle("hidden", tab !== "mailmcp");
             if (tab === "explore") loadServers();
             if (tab === "clients") loadClients();
             if (tab === "live") {
@@ -1485,7 +1492,6 @@
               stopLogsPolling();
             }
             if (tab === "llm") loadLlmPreview();
-            if (tab === "mailmcp") loadMailMcpStatus();
           });
         });
 
@@ -1603,6 +1609,64 @@
           httpForm.reset();
           document.getElementById("f-enabled").checked = true;
           httpForm.querySelector('input[name="http_transport"][value="streamable-http"]').checked = true;
+          fillAllDomainSelects();
+          loadServers();
+        });
+
+        document.getElementById("add-stdio-manual-form").addEventListener("submit", async (ev) => {
+          ev.preventDefault();
+          const msgEl = document.getElementById("stdio-manual-msg");
+          msgEl.innerHTML = "";
+          const id = document.getElementById("ms-id").value.trim().toLowerCase();
+          const cmd = document.getElementById("ms-command").value.trim();
+          if (!id || !cmd) {
+            msgEl.innerHTML = '<div class="msg err">Server id and command are required.</div>';
+            return;
+          }
+          let env;
+          try {
+            env = parseJsonObject(document.getElementById("ms-env").value, "Environment");
+          } catch (e) {
+            msgEl.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            return;
+          }
+          const cwdRaw = document.getElementById("ms-cwd").value.trim();
+          const body = {
+            id,
+            domain: document.getElementById("ms-domain").value.trim() || "default",
+            type: "stdio",
+            enabled: document.getElementById("ms-enabled").checked,
+            command: cmd,
+            cwd: cwdRaw || null,
+            display_name: document.getElementById("ms-display").value.trim() || null,
+            llm_context: document.getElementById("ms-llm").value.trim(),
+            env,
+            stdio_node_inspect: false,
+            stdio_node_inspect_brk: false,
+            stdio_node_inspect_port: 9229,
+          };
+          const res = await apiFetch(api, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = data.detail;
+            const msg =
+              typeof detail === "string"
+                ? detail
+                : Array.isArray(detail)
+                  ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+                  : JSON.stringify(data);
+            msgEl.innerHTML = '<div class="msg err">' + msg + "</div>";
+            return;
+          }
+          msgEl.innerHTML =
+            '<div class="msg ok">Registered. Open <em>Explore servers</em> to verify or edit.</div>';
+          document.getElementById("add-stdio-manual-form").reset();
+          document.getElementById("ms-enabled").checked = true;
+          document.getElementById("ms-env").value = "{}";
           fillAllDomainSelects();
           loadServers();
         });

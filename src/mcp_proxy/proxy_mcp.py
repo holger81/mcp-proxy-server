@@ -17,6 +17,7 @@ from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.models import (
     UpstreamServer,
+    _split_command,
     coerce_flat_os_env_mapping,
     validate_slug_id,
 )
@@ -428,6 +429,42 @@ def _admin_tool_rows() -> list[dict[str, Any]]:
                     "env": {"type": "object", "additionalProperties": True},
                 },
                 "required": ["ecosystem", "serverId", "domain", "package"],
+            },
+        },
+        {
+            "toolName": f"{_ADMIN_SERVER_ID}/registerManualStdioServer",
+            "description": (
+                "Register or update a stdio MCP server from a raw command (no PyPI/npm install). "
+                "Use for binaries already on PATH or image-baked CLIs (e.g. mail-mcp). Same as Admin → "
+                "Register manual stdio MCP."
+            ),
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "serverId": {"type": "string"},
+                    "domain": {"type": "string"},
+                    "command": {
+                        "type": "string",
+                        "description": (
+                            "Shell-style argv (quoted segments allowed), e.g. mail-mcp or "
+                            "/usr/local/bin/mail-mcp"
+                        ),
+                    },
+                    "displayName": {"type": "string"},
+                    "llmContext": {"type": "string"},
+                    "env": {"type": "object", "additionalProperties": True},
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional working directory; omit or empty for none.",
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Defaults to true.",
+                    },
+                },
+                "required": ["serverId", "domain", "command"],
             },
         },
         {
@@ -1154,6 +1191,141 @@ def build_proxy_mcp_server(
                 )
             ]
 
+        if name == "registerManualStdioServer":
+            server_id_raw = args.get("serverId")
+            domain_raw = args.get("domain")
+            command_raw = args.get("command")
+            if not isinstance(server_id_raw, str) or not server_id_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'serverId'.",
+                    )
+                )
+            if not isinstance(domain_raw, str) or not domain_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'domain'.",
+                    )
+                )
+            if not isinstance(command_raw, str) or not command_raw.strip():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'command'.",
+                    )
+                )
+            sid = validate_slug_id(server_id_raw)
+            domain = validate_slug_id(domain_raw)
+            if domain not in domain_store.id_set():
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=f"Unknown domain {domain!r}.",
+                    )
+                )
+            argv = _split_command(command_raw)
+            if not argv:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'command' parsed to an empty argv.",
+                    )
+                )
+            existing = store.get(sid)
+            if existing is not None and existing.type != "stdio":
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=(
+                            f"server id {sid!r} already exists as HTTP; remove it with "
+                            "removeServer before registering stdio."
+                        ),
+                    )
+                )
+            if "env" in args and args.get("env") is not None:
+                env = _coerce_str_dict_arg("env", args.get("env"))
+            elif existing is not None:
+                env = dict(existing.env)
+            else:
+                env = {}
+            display_name = args.get("displayName")
+            if display_name is not None:
+                display_name = str(display_name).strip() or None
+            if (
+                existing is not None
+                and existing.type == "stdio"
+                and "displayName" not in args
+            ):
+                display_name = existing.display_name
+            if "llmContext" in args:
+                llm_context = str(args.get("llmContext", ""))
+            elif existing is not None and existing.type == "stdio":
+                llm_context = existing.llm_context or ""
+            else:
+                llm_context = ""
+            cwd_raw = args.get("cwd")
+            cwd: str | None
+            if cwd_raw is None or (isinstance(cwd_raw, str) and not cwd_raw.strip()):
+                cwd = None
+            elif isinstance(cwd_raw, str):
+                cwd = cwd_raw.strip() or None
+            else:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'cwd' must be a string when provided.",
+                    )
+                )
+            if (
+                existing is not None
+                and existing.type == "stdio"
+                and "cwd" not in args
+            ):
+                cwd = existing.cwd
+            if "enabled" in args:
+                enabled = _coerce_bool_arg("enabled", args.get("enabled"))
+            elif existing is not None:
+                enabled = existing.enabled
+            else:
+                enabled = True
+            try:
+                server = UpstreamServer(
+                    id=sid,
+                    domain=domain,
+                    type="stdio",
+                    enabled=enabled,
+                    display_name=display_name,
+                    llm_context=llm_context,
+                    command=argv,
+                    cwd=cwd,
+                    env=env,
+                )
+            except ValueError as e:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message=str(e) or "Invalid server definition.",
+                    )
+                ) from e
+            remove_stdio_meta(settings.data_dir, sid)
+            try:
+                store.add(server)
+            except ValueError:
+                store.update(sid, server)
+            payload = {
+                "ok": True,
+                "registered": True,
+                "upserted": existing is not None,
+                "server": server.model_dump(mode="json"),
+            }
+            return [
+                mcp_types.TextContent(
+                    type="text", text=_json_discovery(payload, settings)
+                )
+            ]
+
         if name == "upgradeStdioServer":
             server_id = args.get("serverId")
             if not isinstance(server_id, str) or not server_id.strip():
@@ -1282,7 +1454,7 @@ def build_proxy_mcp_server(
                 message=(
                     f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool (or a listed popular "
                     "composite shortcut), or admin tools such as listServers / setServerEnabled / "
-                    "registerStdioServer / upgradeStdioServer / removeServer."
+                    "registerStdioServer / registerManualStdioServer / upgradeStdioServer / removeServer."
                 ),
             )
         )

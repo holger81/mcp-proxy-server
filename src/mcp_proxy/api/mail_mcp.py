@@ -139,7 +139,7 @@ async def mail_mcp_update(request: Request, body: MailMcpUpdateBody) -> dict[str
     if not script.is_file():
         raise HTTPException(
             status_code=503,
-            detail=f"Install script missing ({script}). Mail MCP UI updates work in the Docker image.",
+            detail=f"Install script missing ({script}). Binary updates require the Docker image or install-mail-mcp-release.sh.",
         )
 
     dest = (settings.data_dir / "mail-mcp").resolve()
