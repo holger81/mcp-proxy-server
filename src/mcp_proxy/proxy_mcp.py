@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -43,36 +44,62 @@ _TRUNC_SUFFIX = " …[truncated]"
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
 _ADMIN_SERVER_ID = "mcp-tools-admin"
 
-# Composite MCP tool names for upstream tools: legacy `server/tool`, or safe encoding
-# `serverid__p__<hex utf-8 tool>` (hyphens in server id → underscores before __p__) so strict
-# clients (e.g. Cursor) only see [a-zA-Z0-9_].
+# Composite MCP tool names for upstream tools: legacy `server/tool`, or safe encoding for strict
+# clients (e.g. Cursor) using only [a-zA-Z0-9_]:
+# - Descriptive: `serverid__upstream_tool` (hyphens in server id → underscores)
+# - Fallback when the upstream name is not safely representable: `serverid__p__<hex utf-8 tool>`
 _PROXY_TOOL_SEP = "__p__"
+_SAFE_TOOL_TAIL = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def _hex_utf8_suffix_ok(s: str) -> bool:
+    if len(s) % 2 != 0:
+        return False
+    if not s:
+        return True
+    if not all(ch in "0123456789abcdefABCDEF" for ch in s):
+        return False
+    try:
+        bytes.fromhex(s).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return True
 
 
 def encode_proxy_tool_name(server_id: str, tool_name: str) -> str:
     sid = server_id.replace("-", "_")
+    if _SAFE_TOOL_TAIL.fullmatch(tool_name) and _PROXY_TOOL_SEP not in tool_name:
+        return f"{sid}__{tool_name}"
     hx = tool_name.encode("utf-8").hex()
     return f"{sid}{_PROXY_TOOL_SEP}{hx}"
 
 
 def decode_proxy_tool_name(composite: str) -> tuple[str, str]:
     c = composite.strip()
-    if _PROXY_TOOL_SEP in c:
-        left, right = c.split(_PROXY_TOOL_SEP, 1)
-        if not left or not right or len(right) % 2 != 0:
-            raise ValueError("invalid encoded composite")
-        server_id = left.replace("_", "-")
-        try:
-            tool = bytes.fromhex(right).decode("utf-8")
-        except (ValueError, UnicodeDecodeError) as e:
-            raise ValueError(str(e)) from e
-        return server_id, tool
     if "/" in c:
         sid, tool = c.split("/", 1)
         sid, tool = sid.strip(), tool.strip()
         if not sid or not tool:
             raise ValueError("empty segment")
         return sid, tool
+    i = 0
+    while True:
+        j = c.find(_PROXY_TOOL_SEP, i)
+        if j == -1:
+            break
+        left = c[:j]
+        right = c[j + len(_PROXY_TOOL_SEP) :]
+        if left and _hex_utf8_suffix_ok(right):
+            try:
+                tool = bytes.fromhex(right).decode("utf-8") if right else ""
+            except (ValueError, UnicodeDecodeError) as e:
+                raise ValueError(str(e)) from e
+            return left.replace("_", "-"), tool
+        i = j + 1
+    if "__" in c:
+        left, right = c.split("__", 1)
+        if left and right:
+            return left.replace("_", "-"), right
     raise ValueError("not a composite tool name")
 
 
@@ -297,7 +324,7 @@ def _split_proxy_tool_name(name: str) -> tuple[str, str]:
                 code=mcp_types.INVALID_PARAMS,
                 message=(
                     f"Invalid toolName {name!r}: pass the exact string from discovery "
-                    "(safe `server__p__<hex>` or legacy `server/tool`)."
+                    "(safe `serverid__tool`, hex fallback `serverid__p__<hex>`, or legacy `server/tool`)."
                 ),
             )
         ) from None
@@ -585,8 +612,9 @@ def _base_instructions() -> str:
         "and optionally serverLlmContext (admin notes for that upstream). "
         "Use inputSchema to know required and optional parameters.\n"
         "4) Execute: call callTool with toolName exactly as returned by discovery "
-        "(default: safe encoding `serverid__p__` plus hex(UTF-8 upstream tool name); hyphens in server ids appear "
-        "as underscores before `__p__`). Legacy `server/tool` is still accepted by callTool. "
+        "(default: safe `serverid__upstream_tool` with only letters, digits, and underscores; hyphens in server "
+        "ids become underscores. If the upstream tool name needs other characters, the proxy uses "
+        "`serverid__p__` plus hex(UTF-8) instead. Legacy `server/tool` is still accepted by callTool. "
         "Arguments: JSON object matching that schema.\n\n"
         "The proxy also lists up to three frequently invoked composite tools at the session level (same names as "
         "in discovery): you may call them directly with arguments shaped like the upstream inputSchema, or use "
@@ -714,8 +742,9 @@ def build_meta_tool_list(
                 "For LLMs: execution step only. "
                 "Pass toolName exactly as returned by searchToolsForDomain or searchTool. "
                 + (
-                    "Default format is safe for strict clients: `serverid__p__` plus hex(UTF-8 upstream tool name); "
-                    "hyphens in server id appear as underscores before `__p__`. "
+                    "Default format is safe for strict clients: `serverid__tool` (letters, digits, underscores; "
+                    "hyphens in server id become underscores), or `serverid__p__<hex>` when the upstream name is not "
+                    "fully representable that way. "
                     "Legacy `server/tool` is still accepted. "
                     if settings.safe_tool_names
                     else "Format: `<server-id>/<upstream-tool-name>`. "
@@ -728,7 +757,7 @@ def build_meta_tool_list(
                     "toolName": {
                         "type": "string",
                         "description": (
-                            "Exact toolName from discovery (safe encoded or legacy server/tool)."
+                            "Exact toolName from discovery (`serverid__tool`, hex fallback, or legacy server/tool)."
                             if settings.safe_tool_names
                             else "Format: `<server-id>/<upstream-tool-name>`."
                         ),
@@ -827,7 +856,7 @@ def build_proxy_mcp_server(
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
         hot = frozenset(stats_store.top_keys())
-        if name in hot and ("/" in name or _PROXY_TOOL_SEP in name):
+        if name in hot:
             args = {"toolName": name, "arguments": args}
             name = "callTool"
 

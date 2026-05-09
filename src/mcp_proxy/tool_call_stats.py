@@ -1,4 +1,4 @@
-"""Persistent counters for composite tool names (`server/tool`) invoked via callTool."""
+"""Persistent counters for composite tool names (legacy `server/tool`, safe `srv__tool`, etc.)."""
 
 from __future__ import annotations
 
@@ -50,9 +50,15 @@ class ToolCallStatsStore:
 
     def record_success(self, composite_tool_name: str) -> None:
         key = composite_tool_name.strip()
-        # Slash legacy (`srv/tool`) or safe hex encoding (`srv__p__deadbeef…`).
-        if not key or ("/" not in key and "__p__" not in key):
+        # Composite keys: legacy `srv/tool`, hex fallback `srv__p__…`, or descriptive `srv__tool`.
+        if not key:
             return
+        if "/" not in key and "__p__" not in key:
+            if "__" not in key:
+                return
+            left, _, right = key.partition("__")
+            if not left or not right:
+                return
         with self._lock:
             self._counts[key] = self._counts.get(key, 0) + 1
             self._persist_unlocked()

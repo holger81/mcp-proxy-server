@@ -331,7 +331,7 @@ Then:
 | MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
 | MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
-| MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients). Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
+| MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients), e.g. `email__list_emails`. Names that need other characters fall back to a hex suffix after `__p__`. Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
 
 ---
 ## 🧪 Development
