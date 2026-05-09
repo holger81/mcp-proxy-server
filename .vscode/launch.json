@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach: email MCP @ 192.168.10.31:9229",
+      "address": "192.168.10.31",
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach: email MCP @ localhost:9229",
+      "address": "localhost",
+      "port": 9229,
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}
