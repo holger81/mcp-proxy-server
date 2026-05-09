@@ -98,6 +98,23 @@ class UpstreamServer(BaseModel):
     command: list[str] | None = Field(default=None, description="stdio argv")
     cwd: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    stdio_node_inspect: bool = Field(
+        default=False,
+        description=(
+            "stdio only: if True and the executable is node, spawn with "
+            "--inspect=0.0.0.0:PORT (or --inspect-brk) for Chrome/VS Code attach."
+        ),
+    )
+    stdio_node_inspect_brk: bool = Field(
+        default=False,
+        description="stdio only: use --inspect-brk instead of --inspect (pauses at startup).",
+    )
+    stdio_node_inspect_port: int = Field(
+        default=9229,
+        ge=1024,
+        le=65535,
+        description="stdio only: inspector listen port inside the process network namespace.",
+    )
 
     @field_validator("headers", mode="before")
     @classmethod
@@ -146,6 +163,8 @@ class UpstreamServer(BaseModel):
             self.command = None
             self.cwd = None
             self.env = {}
+            self.stdio_node_inspect = False
+            self.stdio_node_inspect_brk = False
             if self.http_transport is None:
                 self.http_transport = "streamable-http"
         else:

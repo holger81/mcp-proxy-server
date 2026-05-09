@@ -30,6 +30,7 @@ from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.shared.message import SessionMessage
 
 from mcp_proxy.models import UpstreamServer
+from mcp_proxy.stdio_node_inspect import stdio_effective_command
 
 log = logging.getLogger(__name__)
 
@@ -265,10 +266,12 @@ async def _upstream_streams(
 ) -> AsyncGenerator[tuple, None]:
     if server.type == "stdio":
         assert server.command and len(server.command) >= 1
+        eff = stdio_effective_command(server)
+        assert eff and len(eff) >= 1
         merged_env = {**get_default_environment(), **(server.env or {})}
         params = StdioServerParameters(
-            command=server.command[0],
-            args=list(server.command[1:]),
+            command=eff[0],
+            args=list(eff[1:]),
             env=merged_env,
             cwd=server.cwd,
         )

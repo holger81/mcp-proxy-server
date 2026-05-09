@@ -497,6 +497,14 @@
             <legend>stdio</legend>
             <label for="e-cmd">Command</label>
             <input id="e-cmd" type="text" />
+            <label><input type="checkbox" id="e-node-inspect" /> Enable Node.js inspector (<code>--inspect</code>)</label>
+            <span class="hint"
+              >Only when the executable is <code>node</code>. Injects <code>--inspect=0.0.0.0:&lt;port&gt;</code> after
+              <code>node</code>. Map the same TCP port in <code>docker-compose.yml</code> (see example comments there).</span
+            >
+            <label><input type="checkbox" id="e-node-inspect-brk" /> Pause at startup (<code>--inspect-brk</code>)</label>
+            <label for="e-node-inspect-port">Inspector port (inside container)</label>
+            <input id="e-node-inspect-port" type="number" min="1024" max="65535" step="1" value="9229" />
             <label for="e-cwd">Working directory (optional)</label>
             <input id="e-cwd" type="text" />
             <label for="e-env">Environment (JSON object, optional)</label>
@@ -734,8 +742,14 @@
         function targetCell(s) {
           if (s.type === "http") return s.url || "—";
           const c = s.command;
-          if (Array.isArray(c)) return c.join(" ");
-          return "—";
+          let line = Array.isArray(c) ? c.join(" ") : "—";
+          if (s.type === "stdio" && s.stdio_node_inspect) {
+            const p = typeof s.stdio_node_inspect_port === "number" ? s.stdio_node_inspect_port : 9229;
+            const kind = s.stdio_node_inspect_brk ? "inspect-brk" : "inspect";
+            line +=
+              "\n→ spawns with --" + kind + "=0.0.0.0:" + p + " (publish " + p + ":" + p + " in compose)";
+          }
+          return line;
         }
 
         function httpMode(s) {
@@ -814,6 +828,11 @@
           document.getElementById("e-url").value = s.url || "";
           document.getElementById("e-headers").value = JSON.stringify(s.headers && Object.keys(s.headers).length ? s.headers : {}, null, 2);
           document.getElementById("e-cmd").value = commandToString(s.command);
+          document.getElementById("e-node-inspect").checked = !!s.stdio_node_inspect;
+          document.getElementById("e-node-inspect-brk").checked = !!s.stdio_node_inspect_brk;
+          const inspPort =
+            typeof s.stdio_node_inspect_port === "number" ? s.stdio_node_inspect_port : 9229;
+          document.getElementById("e-node-inspect-port").value = String(inspPort);
           document.getElementById("e-cwd").value = s.cwd || "";
           document.getElementById("e-env").value = JSON.stringify(s.env && Object.keys(s.env).length ? s.env : {}, null, 2);
           document.getElementById("e-llm").value = s.llm_context || "";
@@ -859,6 +878,11 @@
               const cmd = document.getElementById("e-cmd").value.trim();
               const cwd = document.getElementById("e-cwd").value.trim() || null;
               const env = parseJsonObject(document.getElementById("e-env").value, "Environment");
+              const inspPortRaw = document.getElementById("e-node-inspect-port").value.trim();
+              const inspPort = parseInt(inspPortRaw, 10);
+              if (inspPortRaw && (Number.isNaN(inspPort) || inspPort < 1024 || inspPort > 65535)) {
+                throw new Error("Inspector port must be an integer from 1024 to 65535");
+              }
               body = {
                 id,
                 domain,
@@ -869,6 +893,9 @@
                 cwd,
                 env,
                 llm_context: document.getElementById("e-llm").value,
+                stdio_node_inspect: document.getElementById("e-node-inspect").checked,
+                stdio_node_inspect_brk: document.getElementById("e-node-inspect-brk").checked,
+                stdio_node_inspect_port: Number.isFinite(inspPort) ? inspPort : 9229,
               };
             }
           } catch (e) {

@@ -7,6 +7,12 @@ services:
     pull_policy: never
     ports:
       - "2222:8080"
+      # Node.js stdio MCP debugging: match Admin → Edit server → "Node inspector port" (same number both sides).
+      # Example:
+      # - "9230:9230"
+      # Or several servers / ports:
+      # - "9230:9230"
+      # - "9231:9231"
     volumes:
       - mcp-proxy-data:/data
       # Match container log timestamps to the host clock (same pattern as Frigate / other stacks).
