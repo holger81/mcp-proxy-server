@@ -256,9 +256,9 @@ Both admin endpoints above require an **admin session**.
 
 ### Node.js stdio debugging (`--inspect`)
 
-For **stdio** servers whose command starts with `node`, the admin **Edit server** form can enable **Node inspector** (injects `--inspect=0.0.0.0:<port>` or `--inspect-brk`). The listen address is always `0.0.0.0` so you can attach from the host when using Docker.
+For **stdio** servers whose command starts with `node`, the admin **Edit server** form can enable **Node inspector** (injects `--inspect=0.0.0.0:9229` or `--inspect-brk=0.0.0.0:9229`). The listen address is always `0.0.0.0` so you can attach from the host when using Docker.
 
-With the bundled `docker-compose.yml`, **`9229`–`9239` are published 1:1** (Node’s usual inspector defaults and neighbors). Pick any port in that range under **Admin → Edit server**, then attach with Chrome (`chrome://inspect`) or your IDE **Attach to Node** at `localhost:<port>`. Omit the range mapping if you do not run debuggers (or override `ports:` in `docker-compose.override.yml`).
+With the bundled `docker-compose.yml`, **host port `9229`** maps to the container inspector on **`9229`** only. Enable inspector under **Admin → Edit server**, then attach with Chrome (`chrome://inspect`) or your IDE **Attach to Node** at `localhost:9229`. Omit this mapping if you do not run debuggers (or override `ports:` in `docker-compose.override.yml`).
 
 ---
 ## 🔐 Authentication

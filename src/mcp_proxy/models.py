@@ -111,10 +111,16 @@ class UpstreamServer(BaseModel):
     )
     stdio_node_inspect_port: int = Field(
         default=9229,
-        ge=1024,
-        le=65535,
-        description="stdio only: inspector listen port inside the process network namespace.",
+        description=(
+            "stdio only: Node inspector port (always 9229; docker-compose publishes only this port)."
+        ),
     )
+
+    @field_validator("stdio_node_inspect_port", mode="before")
+    @classmethod
+    def coerce_stdio_node_inspect_port(cls, _v: object) -> int:
+        """Older configs allowed a port range; Compose now exposes only 9229."""
+        return 9229
 
     @field_validator("headers", mode="before")
     @classmethod
