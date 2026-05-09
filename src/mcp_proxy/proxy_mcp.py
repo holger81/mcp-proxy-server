@@ -43,6 +43,46 @@ _TRUNC_SUFFIX = " …[truncated]"
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
 _ADMIN_SERVER_ID = "mcp-tools-admin"
 
+# Composite MCP tool names for upstream tools: legacy `server/tool`, or safe encoding
+# `serverid__p__<hex utf-8 tool>` (hyphens in server id → underscores before __p__) so strict
+# clients (e.g. Cursor) only see [a-zA-Z0-9_].
+_PROXY_TOOL_SEP = "__p__"
+
+
+def encode_proxy_tool_name(server_id: str, tool_name: str) -> str:
+    sid = server_id.replace("-", "_")
+    hx = tool_name.encode("utf-8").hex()
+    return f"{sid}{_PROXY_TOOL_SEP}{hx}"
+
+
+def decode_proxy_tool_name(composite: str) -> tuple[str, str]:
+    c = composite.strip()
+    if _PROXY_TOOL_SEP in c:
+        left, right = c.split(_PROXY_TOOL_SEP, 1)
+        if not left or not right or len(right) % 2 != 0:
+            raise ValueError("invalid encoded composite")
+        server_id = left.replace("_", "-")
+        try:
+            tool = bytes.fromhex(right).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as e:
+            raise ValueError(str(e)) from e
+        return server_id, tool
+    if "/" in c:
+        sid, tool = c.split("/", 1)
+        sid, tool = sid.strip(), tool.strip()
+        if not sid or not tool:
+            raise ValueError("empty segment")
+        return sid, tool
+    raise ValueError("not a composite tool name")
+
+
+def format_composite_tool_name(
+    server_id: str, upstream_tool: str, settings: Settings
+) -> str:
+    if settings.safe_tool_names:
+        return encode_proxy_tool_name(server_id, upstream_tool)
+    return f"{server_id}/{upstream_tool}"
+
 
 def _truncate_text(text: str, max_chars: int, suffix: str = _TRUNC_SUFFIX) -> str:
     if max_chars <= 0 or len(text) <= max_chars:
@@ -67,6 +107,7 @@ def _llm_limits_excerpt(settings: Settings) -> dict[str, Any]:
 
 def _shape_tool_row_for_llm(row: dict[str, Any], settings: Settings) -> dict[str, Any]:
     out = dict(row)
+    out.pop("_proxyUpstreamTool", None)
     dmax = settings.tool_description_max_chars
     if dmax > 0:
         out["description"] = _truncate_text(str(out.get("description", "")), dmax)
@@ -248,25 +289,18 @@ def _truncate_call_tool_content(
 
 
 def _split_proxy_tool_name(name: str) -> tuple[str, str]:
-    if "/" not in name:
+    try:
+        return decode_proxy_tool_name(name)
+    except ValueError:
         raise McpError(
             mcp_types.ErrorData(
                 code=mcp_types.INVALID_PARAMS,
                 message=(
-                    f"Invalid toolName {name!r}: expected `<server-id>/<upstream-tool-name>` "
-                    "as returned by searchToolsForDomain or searchTool."
+                    f"Invalid toolName {name!r}: pass the exact string from discovery "
+                    "(safe `server__p__<hex>` or legacy `server/tool`)."
                 ),
             )
-        )
-    sid, tool = name.split("/", 1)
-    if not sid or not tool:
-        raise McpError(
-            mcp_types.ErrorData(
-                code=mcp_types.INVALID_PARAMS,
-                message=f"Invalid toolName {name!r}: empty server id or tool name",
-            )
-        )
-    return sid, tool
+        ) from None
 
 
 async def _lookup_tool_row(
@@ -275,15 +309,13 @@ async def _lookup_tool_row(
     composite: str,
 ) -> dict[str, Any] | None:
     """Resolve one discovery row for a composite tool name (for hot-tool list enrichment)."""
-    sid, _, rest = composite.partition("/")
-    orig = rest
-    if not sid.strip() or not orig.strip():
+    try:
+        sid, orig = decode_proxy_tool_name(composite)
+    except ValueError:
         return None
-    sid = sid.strip()
-    orig = orig.strip()
     if sid == _ADMIN_SERVER_ID:
-        for row in _admin_tool_rows():
-            if str(row.get("toolName", "")) == composite:
+        for row in _admin_tool_rows(settings):
+            if row.get("_proxyUpstreamTool") == orig:
                 return _shape_tool_row_for_llm(dict(row), settings)
         return None
     upstream = store.get(sid)
@@ -298,17 +330,27 @@ async def _lookup_tool_row(
     match = [t for t in tools if t.name == orig]
     if not match:
         return None
-    defs = _tool_defs_for_server(upstream, match[:1])
+    defs = _tool_defs_for_server(upstream, match[:1], settings)
     if not defs:
         return None
     return _shape_tool_row_for_llm(defs[0], settings)
 
 
-def _fallback_hot_tool(composite: str) -> mcp_types.Tool:
+def _composite_tool_list_name(composite: str, settings: Settings) -> str:
+    """Canonical Tool.name for a composite (stats keys may still be legacy `server/tool`)."""
+    try:
+        sid, orig = decode_proxy_tool_name(composite)
+    except ValueError:
+        return composite
+    return format_composite_tool_name(sid, orig, settings)
+
+
+def _fallback_hot_tool(composite: str, settings: Settings) -> mcp_types.Tool:
+    wire = _composite_tool_list_name(composite, settings)
     return mcp_types.Tool(
-        name=composite,
+        name=wire,
         description=(
-            f"Popular shortcut for `{composite}` (same as callTool with this toolName). "
+            f"Popular shortcut for `{wire}` (same as callTool with this toolName). "
             "Use searchToolsForDomain if you need the full input schema."
         ),
         inputSchema={"type": "object", "additionalProperties": True},
@@ -333,13 +375,13 @@ async def _build_session_tool_list(
     settings: Settings,
     stats_store: ToolCallStatsStore,
 ) -> list[mcp_types.Tool]:
-    tools = build_meta_tool_list(domain_ids)
+    tools = build_meta_tool_list(domain_ids, settings)
     for composite in stats_store.top_keys():
         row = await _lookup_tool_row(store, settings, composite)
         if row:
             tools.append(_hot_tool_from_row(row))
         else:
-            tools.append(_fallback_hot_tool(composite))
+            tools.append(_fallback_hot_tool(composite, settings))
     return tools
 
 
@@ -359,12 +401,14 @@ async def _list_upstream_tools(
 
 
 def _tool_defs_for_server(
-    server: UpstreamServer, tools: list[mcp_types.Tool]
+    server: UpstreamServer,
+    tools: list[mcp_types.Tool],
+    settings: Settings,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     note = (server.llm_context or "").strip()
     for t in tools:
-        composite = f"{server.id}/{t.name}"
+        composite = format_composite_tool_name(server.id, t.name, settings)
         row: dict[str, Any] = {
             "toolName": composite,
             "description": (t.description or "").strip(),
@@ -378,24 +422,34 @@ def _tool_defs_for_server(
     return out
 
 
-def _admin_tool_rows() -> list[dict[str, Any]]:
+def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
+    def mk(
+        upstream_tool: str, description: str, input_schema: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "toolName": format_composite_tool_name(
+                _ADMIN_SERVER_ID, upstream_tool, settings
+            ),
+            "_proxyUpstreamTool": upstream_tool,
+            "description": description,
+            "domain": _ADMIN_DOMAIN_ID,
+            "serverId": _ADMIN_SERVER_ID,
+            "inputSchema": input_schema,
+        }
+
     return [
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/listServers",
-            "description": (
+        mk(
+            "listServers",
+            (
                 "List configured upstream MCP servers (id, type, domain, enabled, target, and "
                 "stdio package metadata when available)."
             ),
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/setServerEnabled",
-            "description": "Enable or disable a configured server.",
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {
+            {"type": "object", "properties": {}},
+        ),
+        mk(
+            "setServerEnabled",
+            "Enable or disable a configured server.",
+            {
                 "type": "object",
                 "properties": {
                     "serverId": {
@@ -409,15 +463,11 @@ def _admin_tool_rows() -> list[dict[str, Any]]:
                 },
                 "required": ["serverId", "enabled"],
             },
-        },
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/registerStdioServer",
-            "description": (
-                "Install a PyPI/npm package under /data and create/update a stdio server."
-            ),
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {
+        ),
+        mk(
+            "registerStdioServer",
+            "Install a PyPI/npm package under /data and create/update a stdio server.",
+            {
                 "type": "object",
                 "properties": {
                     "ecosystem": {"type": "string", "enum": ["pypi", "npm"]},
@@ -430,17 +480,15 @@ def _admin_tool_rows() -> list[dict[str, Any]]:
                 },
                 "required": ["ecosystem", "serverId", "domain", "package"],
             },
-        },
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/registerManualStdioServer",
-            "description": (
+        ),
+        mk(
+            "registerManualStdioServer",
+            (
                 "Register or update a stdio MCP server from a raw command (no PyPI/npm install). "
                 "Use for binaries already on PATH or image-baked CLIs (e.g. mail-mcp). Same as Admin → "
                 "Register manual stdio MCP."
             ),
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {
+            {
                 "type": "object",
                 "properties": {
                     "serverId": {"type": "string"},
@@ -466,29 +514,25 @@ def _admin_tool_rows() -> list[dict[str, Any]]:
                 },
                 "required": ["serverId", "domain", "command"],
             },
-        },
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/upgradeStdioServer",
-            "description": "Upgrade an installed stdio server package to the latest version.",
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {
+        ),
+        mk(
+            "upgradeStdioServer",
+            "Upgrade an installed stdio server package to the latest version.",
+            {
                 "type": "object",
                 "properties": {"serverId": {"type": "string"}},
                 "required": ["serverId"],
             },
-        },
-        {
-            "toolName": f"{_ADMIN_SERVER_ID}/removeServer",
-            "description": "Remove a configured server.",
-            "domain": _ADMIN_DOMAIN_ID,
-            "serverId": _ADMIN_SERVER_ID,
-            "inputSchema": {
+        ),
+        mk(
+            "removeServer",
+            "Remove a configured server.",
+            {
                 "type": "object",
                 "properties": {"serverId": {"type": "string"}},
                 "required": ["serverId"],
             },
-        },
+        ),
     ]
 
 
@@ -497,7 +541,7 @@ async def _collect_all_tool_defs(
 ) -> list[dict[str, Any]]:
     combined: list[dict[str, Any]] = []
     if domain_id in (None, _ADMIN_DOMAIN_ID):
-        combined.extend(_admin_tool_rows())
+        combined.extend(_admin_tool_rows(settings))
     for s in store.list_servers():
         if not s.enabled:
             continue
@@ -505,7 +549,7 @@ async def _collect_all_tool_defs(
             continue
         try:
             tools = await _list_upstream_tools(s, settings)
-            combined.extend(_tool_defs_for_server(s, tools))
+            combined.extend(_tool_defs_for_server(s, tools, settings))
         except TimeoutError:
             log.warning("collect tools: timeout for upstream %s", s.id)
         except Exception as e:
@@ -540,8 +584,10 @@ def _base_instructions() -> str:
         "3) Read the JSON response: each entry includes toolName, description, domain, serverId, inputSchema, "
         "and optionally serverLlmContext (admin notes for that upstream). "
         "Use inputSchema to know required and optional parameters.\n"
-        "4) Execute: call callTool with toolName exactly as returned (format `<server-id>/<upstream-tool-name>`) "
-        "and arguments as a JSON object matching that schema.\n\n"
+        "4) Execute: call callTool with toolName exactly as returned by discovery "
+        "(default: safe encoding `serverid__p__` plus hex(UTF-8 upstream tool name); hyphens in server ids appear "
+        "as underscores before `__p__`). Legacy `server/tool` is still accepted by callTool. "
+        "Arguments: JSON object matching that schema.\n\n"
         "The proxy also lists up to three frequently invoked composite tools at the session level (same names as "
         "in discovery): you may call them directly with arguments shaped like the upstream inputSchema, or use "
         "callTool as usual.\n\n"
@@ -586,7 +632,9 @@ def full_instructions_for_store(
     )
 
 
-def build_meta_tool_list(domain_ids: list[str]) -> list[mcp_types.Tool]:
+def build_meta_tool_list(
+    domain_ids: list[str], settings: Settings
+) -> list[mcp_types.Tool]:
     dom = _domain_enum_schema(
         domain_ids,
         "Domain id (unique). Choose one; configure domains in the proxy admin UI.",
@@ -664,16 +712,26 @@ def build_meta_tool_list(domain_ids: list[str]) -> list[mcp_types.Tool]:
             name="callTool",
             description=(
                 "For LLMs: execution step only. "
-                "Pass toolName exactly as returned by searchToolsForDomain or searchTool "
-                "(`<server-id>/<upstream-tool-name>`). "
-                "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result."
+                "Pass toolName exactly as returned by searchToolsForDomain or searchTool. "
+                + (
+                    "Default format is safe for strict clients: `serverid__p__` plus hex(UTF-8 upstream tool name); "
+                    "hyphens in server id appear as underscores before `__p__`. "
+                    "Legacy `server/tool` is still accepted. "
+                    if settings.safe_tool_names
+                    else "Format: `<server-id>/<upstream-tool-name>`. "
+                )
+                + "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "toolName": {
                         "type": "string",
-                        "description": "Format: `<server-id>/<upstream-tool-name>`.",
+                        "description": (
+                            "Exact toolName from discovery (safe encoded or legacy server/tool)."
+                            if settings.safe_tool_names
+                            else "Format: `<server-id>/<upstream-tool-name>`."
+                        ),
                     },
                     "arguments": {
                         "type": "object",
@@ -699,10 +757,10 @@ def get_llm_preview_snapshot(
     if not ids:
         ids = {"default"}
     ids.add(_ADMIN_DOMAIN_ID)
-    tools = build_meta_tool_list(ids)
+    tools = build_meta_tool_list(ids, cfg)
     if stats_store is not None:
         for composite in stats_store.top_keys():
-            tools.append(_fallback_hot_tool(composite))
+            tools.append(_fallback_hot_tool(composite, cfg))
     tool_dicts = [
         t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools
     ]
@@ -769,7 +827,7 @@ def build_proxy_mcp_server(
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
         hot = frozenset(stats_store.top_keys())
-        if name in hot and "/" in name:
+        if name in hot and ("/" in name or _PROXY_TOOL_SEP in name):
             args = {"toolName": name, "arguments": args}
             name = "callTool"
 

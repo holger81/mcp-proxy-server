@@ -50,7 +50,8 @@ class ToolCallStatsStore:
 
     def record_success(self, composite_tool_name: str) -> None:
         key = composite_tool_name.strip()
-        if not key or "/" not in key:
+        # Slash legacy (`srv/tool`) or safe hex encoding (`srv__p__deadbeef…`).
+        if not key or ("/" not in key and "__p__" not in key):
             return
         with self._lock:
             self._counts[key] = self._counts.get(key, 0) + 1
