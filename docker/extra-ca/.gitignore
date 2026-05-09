@@ -1,0 +1,3 @@
+# PEMs/CRTs are machine-local; keep them here for the compose bind mount.
+*.pem
+*.crt

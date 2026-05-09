@@ -164,7 +164,10 @@ docker build -t mcp-proxy .
 # Optional: pin another mail-mcp release (Linux amd64 binary baked into the image).
 # Use a tag (v0.4.5) or `latest` for GitHub’s current release:
 # docker build --build-arg MAIL_MCP_VERSION=latest -t mcp-proxy .
-docker run --rm -p 2222:8080 -v mcp-proxy-data:/data mcp-proxy
+docker run --rm -p 2222:8080 \
+  -v mcp-proxy-data:/data \
+  -v "$(pwd)/docker/extra-ca:/data/extra-ca:ro" \
+  mcp-proxy
 ```
 
 ---
@@ -181,6 +184,8 @@ The image includes **[mail-mcp](https://github.com/tecnologicachile/mail-mcp)** 
 Use segment **`DEFAULT`** unless you configure multi-account (`MAIL_IMAP_WORK_*`, etc.). Paste into **Environment** (JSON) on the manual stdio form, or into Compose — keys must be **strings** in JSON (`"true"` not `true`).
 
 `MAIL_*` reference: [mail-mcp account setup](https://github.com/tecnologicachile/mail-mcp/blob/main/docs/account-setup.md). There is **no** documented env var to disable TLS certificate verification; fix CA / hostname instead.
+
+**Private CA / self-signed IMAP TLS:** place `*.pem` or `*.crt` files in **`docker/extra-ca/`** on the host. Docker Compose bind-mounts that folder to `/data/extra-ca`; the entrypoint installs them into the container OS trust store before the app starts (PEM contents stay gitignored). For a plain `docker run`, add `-v "$(pwd)/docker/extra-ca:/data/extra-ca:ro"`.
 
 **Example — Admin UI Environment field (replace placeholders):**
 

@@ -15,6 +15,8 @@ services:
       - "9229:9229/tcp"
     volumes:
       - mcp-proxy-data:/data
+      # TLS: drop *.pem / *.crt here (gitignored); merged into OS trust store at container start (mail-mcp IMAP/SMTP).
+      - ./docker/extra-ca:/data/extra-ca:ro
       # Match container log timestamps to the host clock (same pattern as Frigate / other stacks).
       - /etc/localtime:/etc/localtime:ro
     environment:
