@@ -1,0 +1,90 @@
+diff --git a/src/services/imap.service.ts b/src/services/imap.service.ts
+index 17be138..7a8c823 100644
+--- a/src/services/imap.service.ts
++++ b/src/services/imap.service.ts
+@@ -688,6 +688,43 @@ export default class ImapService {
+     }
+   }
+ 
++  /**
++   * Map user-facing mailbox names to the exact path returned by LIST.
++   * Exchange/Outlook often stall on UID COPY when the destination string does not match the
++   * server's canonical folder path (e.g. ``INBOX`` vs ``Inbox``).
++   */
++  private static resolveMailboxPath(
++    list: Awaited<ReturnType<ImapFlow['list']>>,
++    requested: string,
++  ): string {
++    const r = requested.trim();
++    if (!r) return r;
++
++    const normSu = (su?: string): string =>
++      (su || '')
++        .replace(/^\\/u, '')
++        .toLowerCase();
++
++    const exact = list.find((m) => m.path === r);
++    if (exact) return exact.path;
++
++    const rl = r.toLowerCase();
++    const ci = list.find((m) => m.path.toLowerCase() === rl);
++    if (ci) return ci.path;
++
++    if (rl === 'inbox') {
++      const inbox = list.find((m) => normSu(m.specialUse) === 'inbox');
++      if (inbox) return inbox.path;
++    }
++
++    if (rl.includes('junk') || rl === 'spam') {
++      const junk = list.find((m) => normSu(m.specialUse).includes('junk'));
++      if (junk) return junk.path;
++    }
++
++    return r;
++  }
++
+   // -------------------------------------------------------------------------
+   // Find real folder for an email
+   // -------------------------------------------------------------------------
+@@ -788,10 +825,13 @@ export default class ImapService {
+     const client = await this.connections.getImapClient(accountName);
+     const safeSource = sanitizeMailboxName(sourceMailbox);
+     const safeDest = sanitizeMailboxName(destinationMailbox);
+-    await ImapService.assertRealMailbox(client, safeSource);
+-    const lock = await client.getMailboxLock(safeSource);
++    const mailboxes = await client.list();
++    const resolvedSource = ImapService.resolveMailboxPath(mailboxes, safeSource);
++    const resolvedDest = ImapService.resolveMailboxPath(mailboxes, safeDest);
++    await ImapService.assertRealMailbox(client, resolvedSource);
++    const lock = await client.getMailboxLock(resolvedSource);
+     try {
+-      await ImapService.copyThenDelete(client, emailId, safeDest);
++      await ImapService.copyThenDelete(client, emailId, resolvedDest);
+     } finally {
+       lock.release();
+     }
+@@ -922,8 +962,13 @@ export default class ImapService {
+     destination: string,
+   ): Promise<BulkResult> {
+     const client = await this.connections.getImapClient(accountName);
+-    await ImapService.assertRealMailbox(client, mailbox);
+-    const lock = await client.getMailboxLock(mailbox);
++    const safeMailbox = sanitizeMailboxName(mailbox);
++    const safeDest = sanitizeMailboxName(destination);
++    const mailboxes = await client.list();
++    const resolvedMailbox = ImapService.resolveMailboxPath(mailboxes, safeMailbox);
++    const resolvedDest = ImapService.resolveMailboxPath(mailboxes, safeDest);
++    await ImapService.assertRealMailbox(client, resolvedMailbox);
++    const lock = await client.getMailboxLock(resolvedMailbox);
+     const result: BulkResult = {
+       total: ids.length,
+       succeeded: 0,
+@@ -932,7 +977,7 @@ export default class ImapService {
+     };
+     try {
+       const range = ids.join(',');
+-      await ImapService.copyThenDelete(client, range, destination);
++      await ImapService.copyThenDelete(client, range, resolvedDest);
+       result.succeeded = ids.length;
+     } catch (err) {
+       result.failed = ids.length;
