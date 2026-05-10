@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
+from collections.abc import Iterable
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import anyio
 from mcp import types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.server import Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.shared.exceptions import McpError
+from pydantic import AnyUrl
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
@@ -43,6 +49,33 @@ log = logging.getLogger(__name__)
 _TRUNC_SUFFIX = " …[truncated]"
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
 _ADMIN_SERVER_ID = "mcp-tools-admin"
+
+# Built-in MCP resource: proxy host clock when resources/read is called (LLM-friendly “what time is it”).
+_PROXY_DATETIME_RESOURCE_URI_STR = "mcp-proxy://meta/current-datetime"
+
+
+def _proxy_datetime_resource_body() -> str:
+    """Plain-text snapshot of the proxy process clock when the resource is read."""
+    now_utc = datetime.now(timezone.utc)
+    lines = [
+        f"utc_iso8601={now_utc.isoformat()}",
+        f"unix_timestamp_s={now_utc.timestamp():.3f}",
+    ]
+    tz_raw = (os.environ.get("TZ") or "").strip()
+    if tz_raw:
+        try:
+            local = datetime.now(ZoneInfo(tz_raw))
+            lines.append(f"local_wall_clock_iso8601={local.isoformat()}")
+            lines.append(f"tz={tz_raw!r}")
+        except Exception:
+            lines.append(f"tz_env={tz_raw!r}_invalid_local_time_unavailable")
+    else:
+        lines.append("note=no_TZ_env_see_utc_only_for_container_local_wall_clock")
+    lines.append(
+        "hint=this_text_is_generated_when_resources_read_runs_refresh_for_a_new_snapshot"
+    )
+    return "\n".join(lines) + "\n"
+
 
 # Composite MCP tool names for upstream tools: legacy `server/tool`, or safe encoding for strict
 # clients (e.g. Cursor) using only [a-zA-Z0-9_]:
@@ -616,6 +649,10 @@ def _base_instructions() -> str:
         "ids become underscores. If the upstream tool name needs other characters, the proxy uses "
         "`serverid__p__` plus hex(UTF-8) instead. Legacy `server/tool` is still accepted by callTool. "
         "Arguments: JSON object matching that schema.\n\n"
+        "Resources (optional): MCP resources/list exposes `mcp-proxy://meta/current-datetime`; "
+        "resources/read on that URI returns the proxy host clock (UTC ISO 8601 and unix time; optional local "
+        "wall-clock line when the container sets TZ). Use it when you need the current date/time for scheduling "
+        "or relative dates.\n\n"
         "The proxy also lists up to three frequently invoked composite tools at the session level (same names as "
         "in discovery): you may call them directly with arguments shaped like the upstream inputSchema, or use "
         "callTool as usual.\n\n"
@@ -793,6 +830,17 @@ def get_llm_preview_snapshot(
     tool_dicts = [
         t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools
     ]
+    resources_preview = [
+        {
+            "uri": _PROXY_DATETIME_RESOURCE_URI_STR,
+            "name": "Current date and time",
+            "description": (
+                "Proxy host clock when read (UTC + unix; optional TZ-based local line). "
+                "Not a substitute for the user’s local timezone unless TZ matches their environment."
+            ),
+            "mimeType": "text/plain",
+        }
+    ]
     return {
         "server": {
             "name": "mcp-proxy",
@@ -804,6 +852,7 @@ def get_llm_preview_snapshot(
         },
         "instructions": full_instructions_for_store(store, cfg.instructions_max_chars),
         "tools": tool_dicts,
+        "resources": resources_preview,
         "extras": {
             "upstream_tools": (
                 "Hidden until searchToolsForDomain / searchTool; searchToolsForDomain uses query + pagination "
@@ -811,7 +860,7 @@ def get_llm_preview_snapshot(
             ),
             "protocol": (
                 "Full initialize/capabilities exchange is handled by the MCP SDK; "
-                "this preview focuses on instructions + listed tools."
+                "this preview focuses on instructions + listed tools + built-in resources."
             ),
             "llm_context_limits": _llm_limits_excerpt(cfg),
         },
@@ -849,6 +898,40 @@ def build_proxy_mcp_server(
         return await _build_session_tool_list(
             store, _domain_ids(), settings, stats_store
         )
+
+    @server.list_resources()
+    async def list_resources() -> list[mcp_types.Resource]:
+        return [
+            mcp_types.Resource(
+                uri=_PROXY_DATETIME_RESOURCE_URI_STR,
+                name="Current date and time",
+                description=(
+                    "Snapshot of the MCP proxy host clock when read (UTC ISO 8601 and unix time). "
+                    "Includes an optional local wall-clock line when the container has TZ set. "
+                    "Refresh by calling resources/read again."
+                ),
+                mimeType="text/plain",
+            )
+        ]
+
+    @server.read_resource()
+    async def read_resource(uri: AnyUrl) -> Iterable[ReadResourceContents]:
+        if str(uri).rstrip("/") != _PROXY_DATETIME_RESOURCE_URI_STR:
+            raise McpError(
+                mcp_types.ErrorData(
+                    code=mcp_types.INVALID_PARAMS,
+                    message=(
+                        f"Unknown resource URI {str(uri)!r}. "
+                        f"The proxy only defines {_PROXY_DATETIME_RESOURCE_URI_STR!r}."
+                    ),
+                )
+            )
+        return [
+            ReadResourceContents(
+                content=_proxy_datetime_resource_body(),
+                mime_type="text/plain",
+            )
+        ]
 
     @server.call_tool()
     async def call_tool(
