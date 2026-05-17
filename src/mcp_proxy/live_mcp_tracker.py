@@ -6,13 +6,19 @@ import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
+
+if TYPE_CHECKING:
+    from mcp_proxy.client_store import ApiClientRecord
 
 
 current_mcp_session_id: ContextVar[str | None] = ContextVar(
     "current_mcp_session_id", default=None
+)
+current_mcp_api_client: ContextVar[ApiClientRecord | None] = ContextVar(
+    "current_mcp_api_client", default=None
 )
 current_mcp_peer: ContextVar[str | None] = ContextVar("current_mcp_peer", default=None)
 current_mcp_user_agent: ContextVar[str | None] = ContextVar(

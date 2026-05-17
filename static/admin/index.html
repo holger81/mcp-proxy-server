@@ -77,6 +77,44 @@
         color: #8888a0;
         margin-top: 0.2rem;
       }
+      .client-llm-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+        gap: 0.5rem 1rem;
+        margin-top: 0.5rem;
+      }
+      .client-llm-grid label {
+        margin-top: 0;
+      }
+      .client-llm-grid input[type="number"] {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 0.2rem;
+        padding: 0.35rem 0.5rem;
+        border: 1px solid #3a3a4a;
+        border-radius: 6px;
+        background: #1a1a22;
+        color: #f0f0f8;
+      }
+      .client-tools-checkboxes {
+        max-height: 18rem;
+        overflow-y: auto;
+        border: 1px solid #3a3a4a;
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin-top: 0.35rem;
+        background: #1a1a22;
+      }
+      .client-tool-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        margin: 0.35rem 0;
+        font-size: 0.85rem;
+      }
+      .client-tool-row code {
+        font-size: 0.8em;
+      }
       button {
         margin-top: 1rem;
         padding: 0.5rem 1rem;
@@ -474,12 +512,34 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             <th>ID</th>
             <th>Label</th>
             <th>Created</th>
+            <th>Policy</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="clients-body"></tbody>
       </table>
       <p id="clients-empty" class="hint">No clients yet.</p>
+
+      <div id="client-config-panel" class="hidden" style="margin-top: 1.25rem; border-top: 1px solid var(--border, #333); padding-top: 1rem">
+        <h3>Configure client <code id="client-config-id"></code></h3>
+        <p class="hint">
+          LLM limits left blank use server defaults (from environment / docker-compose). Unchecked tools are
+          disabled for this client’s bearer token only.
+        </p>
+        <label for="client-config-label">Label</label>
+        <input id="client-config-label" type="text" autocomplete="off" />
+        <h4 style="margin-top: 1rem">LLM context limits <span class="hint">(optional overrides)</span></h4>
+        <div id="client-llm-limits-form" class="client-llm-grid"></div>
+        <h4 style="margin-top: 1rem">Tools</h4>
+        <p class="hint small">Meta-tools and every upstream tool exposed via the proxy.</p>
+        <div id="client-tools-loading" class="hint">Loading tool catalog…</div>
+        <div id="client-tools-list" class="client-tools-checkboxes hidden"></div>
+        <div style="margin-top: 0.75rem">
+          <button type="button" id="client-config-save">Save client settings</button>
+          <button type="button" class="secondary" id="client-config-cancel">Cancel</button>
+        </div>
+        <div id="client-config-msg"></div>
+      </div>
     </section>
 
     <section id="panel-live" class="hidden" role="tabpanel">
@@ -1232,8 +1292,192 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           }
         }
 
+        const CLIENT_LLM_FIELDS = [
+          { key: "tool_search_max_matches", label: "Search max matches", type: "number" },
+          { key: "tool_domain_default_limit", label: "Domain page default", type: "number" },
+          { key: "tool_domain_max_limit", label: "Domain page max", type: "number" },
+          { key: "tool_description_max_chars", label: "Description max chars", type: "number" },
+          { key: "tool_server_llm_context_max_chars", label: "Server LLM context max", type: "number" },
+          { key: "tool_input_schema_max_chars", label: "Input schema max chars", type: "number" },
+          { key: "call_tool_response_text_max_chars", label: "Call response max chars", type: "number" },
+          { key: "instructions_max_chars", label: "Instructions max chars", type: "number" },
+          { key: "tool_discovery_compact_json", label: "Compact discovery JSON", type: "checkbox" },
+        ];
+
+        let clientToolCatalogCache = null;
+        let clientConfigEditingId = null;
+
+        function hideClientConfigPanel() {
+          clientConfigEditingId = null;
+          document.getElementById("client-config-panel").classList.add("hidden");
+          document.getElementById("client-config-msg").innerHTML = "";
+        }
+
+        async function loadClientToolCatalog() {
+          if (clientToolCatalogCache) return clientToolCatalogCache;
+          const res = await apiFetch(apiClients + "/tool-catalog");
+          if (!res.ok) throw new Error("tool catalog " + res.status);
+          clientToolCatalogCache = await res.json();
+          return clientToolCatalogCache;
+        }
+
+        function buildClientLlmLimitsForm(globalLimits, clientLimits) {
+          const form = document.getElementById("client-llm-limits-form");
+          form.replaceChildren();
+          const lim = clientLimits || {};
+          const glob = globalLimits || {};
+          for (const f of CLIENT_LLM_FIELDS) {
+            const wrap = document.createElement("div");
+            const lab = document.createElement("label");
+            lab.setAttribute("for", "cll-" + f.key);
+            const defHint =
+              f.type === "checkbox"
+                ? glob[f.key] === true
+                  ? "true"
+                  : "false"
+                : glob[f.key] !== undefined && glob[f.key] !== null
+                  ? String(glob[f.key])
+                  : "—";
+            lab.textContent = f.label + " ";
+            const hint = document.createElement("span");
+            hint.className = "hint";
+            hint.textContent = "(default: " + defHint + ")";
+            lab.appendChild(hint);
+            wrap.appendChild(lab);
+            if (f.type === "checkbox") {
+              const inp = document.createElement("select");
+              inp.id = "cll-" + f.key;
+              inp.dataset.llmKey = f.key;
+              for (const opt of [
+                { v: "", t: "use default" },
+                { v: "true", t: "true" },
+                { v: "false", t: "false" },
+              ]) {
+                const o = document.createElement("option");
+                o.value = opt.v;
+                o.textContent = opt.t;
+                inp.appendChild(o);
+              }
+              if (lim[f.key] === true) inp.value = "true";
+              else if (lim[f.key] === false) inp.value = "false";
+              wrap.appendChild(inp);
+            } else {
+              const inp = document.createElement("input");
+              inp.type = "number";
+              inp.id = "cll-" + f.key;
+              inp.dataset.llmKey = f.key;
+              inp.min = "0";
+              inp.placeholder = "use default";
+              if (lim[f.key] !== null && lim[f.key] !== undefined) inp.value = String(lim[f.key]);
+              wrap.appendChild(inp);
+            }
+            form.appendChild(wrap);
+          }
+        }
+
+        function buildClientToolsCheckboxes(catalogTools, disabledSet) {
+          const listEl = document.getElementById("client-tools-list");
+          const loading = document.getElementById("client-tools-loading");
+          loading.classList.add("hidden");
+          listEl.classList.remove("hidden");
+          listEl.replaceChildren();
+          const disabled = disabledSet || new Set();
+          let lastKind = "";
+          for (const t of catalogTools) {
+            if (t.kind !== lastKind) {
+              lastKind = t.kind;
+              const h = document.createElement("div");
+              h.className = "hint";
+              h.style.marginTop = "0.5rem";
+              h.style.fontWeight = "600";
+              h.textContent =
+                t.kind === "meta"
+                  ? "Meta tools"
+                  : t.kind === "admin"
+                    ? "Administration"
+                    : "Upstream";
+              listEl.appendChild(h);
+            }
+            const row = document.createElement("label");
+            row.className = "client-tool-row";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.dataset.toolName = t.toolName;
+            cb.checked = !disabled.has(t.toolName);
+            row.appendChild(cb);
+            const span = document.createElement("span");
+            span.innerHTML =
+              "<code>" +
+              t.toolName +
+              "</code>" +
+              (t.domain ? ' <span class="hint">(' + t.domain + ")</span>" : "");
+            row.appendChild(span);
+            listEl.appendChild(row);
+          }
+        }
+
+        function readClientLlmLimitsFromForm() {
+          const out = {};
+          for (const f of CLIENT_LLM_FIELDS) {
+            const el = document.querySelector('[data-llm-key="' + f.key + '"]');
+            if (!el) continue;
+            if (f.type === "checkbox") {
+              const v = el.value;
+              out[f.key] = v === "" ? null : v === "true";
+              continue;
+            }
+            const raw = el.value.trim();
+            if (raw === "") out[f.key] = null;
+            else {
+              const n = parseInt(raw, 10);
+              out[f.key] = Number.isFinite(n) ? n : null;
+            }
+          }
+          return out;
+        }
+
+        function readDisabledToolsFromForm() {
+          const disabled = [];
+          document
+            .querySelectorAll("#client-tools-list input[type=checkbox][data-tool-name]")
+            .forEach((cb) => {
+              if (!cb.checked) disabled.push(cb.dataset.toolName);
+            });
+          return disabled;
+        }
+
+        async function openClientConfig(clientId) {
+          clientConfigEditingId = clientId;
+          const panel = document.getElementById("client-config-panel");
+          const msg = document.getElementById("client-config-msg");
+          msg.innerHTML = "";
+          panel.classList.remove("hidden");
+          document.getElementById("client-config-id").textContent = clientId;
+          document.getElementById("client-tools-loading").classList.remove("hidden");
+          document.getElementById("client-tools-list").classList.add("hidden");
+          try {
+            const [clientRes, catalog] = await Promise.all([
+              apiFetch(apiClients + "/" + encodeURIComponent(clientId)),
+              loadClientToolCatalog(),
+            ]);
+            const data = await clientRes.json().catch(() => ({}));
+            if (!clientRes.ok) {
+              msg.innerHTML =
+                '<div class="msg err">Failed to load client (' + clientRes.status + ")</div>";
+              return;
+            }
+            document.getElementById("client-config-label").value = data.label || "";
+            buildClientLlmLimitsForm(data.global_llm_limits, data.llm_limits);
+            buildClientToolsCheckboxes(catalog.tools || [], new Set(data.disabled_tools || []));
+            panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch (e) {
+            msg.innerHTML = '<div class="msg err">' + String(e) + "</div>";
+          }
+        }
+
         async function loadClients() {
           clientMsg.innerHTML = "";
+          hideClientConfigPanel();
           const res = await apiFetch(apiClients);
           if (!res.ok) {
             clientMsg.innerHTML =
@@ -1257,7 +1501,17 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             tdL.textContent = c.label;
             const tdC = document.createElement("td");
             tdC.textContent = c.created_at || "—";
+            const tdP = document.createElement("td");
+            const parts = [];
+            if (c.has_llm_overrides) parts.push("custom limits");
+            if (c.disabled_tools_count) parts.push(c.disabled_tools_count + " off");
+            tdP.textContent = parts.length ? parts.join(", ") : "defaults";
             const tdA = document.createElement("td");
+            const cfg = document.createElement("button");
+            cfg.type = "button";
+            cfg.className = "secondary small";
+            cfg.textContent = "Configure";
+            cfg.addEventListener("click", () => openClientConfig(c.id));
             const del = document.createElement("button");
             del.type = "button";
             del.className = "danger";
@@ -1271,10 +1525,12 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
                 alert("Revoke failed: " + r.status);
                 return;
               }
+              hideClientConfigPanel();
               loadClients();
             });
+            tdA.appendChild(cfg);
             tdA.appendChild(del);
-            tr.append(tdId, tdL, tdC, tdA);
+            tr.append(tdId, tdL, tdC, tdP, tdA);
             clientsBody.appendChild(tr);
           }
         }
@@ -1310,7 +1566,46 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           loadClients();
         });
 
-        document.getElementById("client-refresh").addEventListener("click", () => loadClients());
+        document.getElementById("client-refresh").addEventListener("click", () => {
+          clientToolCatalogCache = null;
+          loadClients();
+        });
+
+        document.getElementById("client-config-cancel").addEventListener("click", hideClientConfigPanel);
+
+        document.getElementById("client-config-save").addEventListener("click", async () => {
+          const msg = document.getElementById("client-config-msg");
+          msg.innerHTML = "";
+          if (!clientConfigEditingId) return;
+          const label = document.getElementById("client-config-label").value.trim();
+          if (!label) {
+            msg.innerHTML = '<div class="msg err">Label is required.</div>';
+            return;
+          }
+          const body = {
+            label,
+            llm_limits: readClientLlmLimitsFromForm(),
+            disabled_tools: readDisabledToolsFromForm(),
+          };
+          const res = await apiFetch(apiClients + "/" + encodeURIComponent(clientConfigEditingId), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const d = data.detail;
+            msg.innerHTML =
+              '<div class="msg err">' +
+              (typeof d === "string" ? d : JSON.stringify(data)) +
+              "</div>";
+            return;
+          }
+          msg.innerHTML = '<div class="msg ok">Client settings saved.</div>';
+          clientToolCatalogCache = null;
+          loadClients();
+          openClientConfig(clientConfigEditingId);
+        });
 
         async function loadDomainsPanel() {
           const domainMsg = document.getElementById("domain-msg");

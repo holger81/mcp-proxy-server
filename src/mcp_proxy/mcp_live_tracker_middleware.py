@@ -8,6 +8,7 @@ from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
+    current_mcp_api_client,
     current_mcp_api_client_id,
     current_mcp_api_client_label,
     current_mcp_peer,
@@ -71,20 +72,24 @@ class McpLiveTrackerMiddleware:
 
         api_client_id = None
         api_client_label = None
+        api_client_rec = None
         try:
             token = _bearer_from_headers(hdrs)
             if token and self.client_store is not None:
                 rec = self.client_store.resolve_bearer(token)
                 if rec is not None:
+                    api_client_rec = rec
                     api_client_id = rec.id
                     api_client_label = rec.label
         except Exception:
             api_client_id = None
             api_client_label = None
+            api_client_rec = None
 
         tok_sess = current_mcp_session_id.set(sess)
         tok_peer = current_mcp_peer.set(peer)
         tok_ua = current_mcp_user_agent.set(ua)
+        tok_client = current_mcp_api_client.set(api_client_rec)
         tok_cid = current_mcp_api_client_id.set(api_client_id)
         tok_clabel = current_mcp_api_client_label.set(api_client_label)
         try:
@@ -101,5 +106,6 @@ class McpLiveTrackerMiddleware:
             current_mcp_session_id.reset(tok_sess)
             current_mcp_peer.reset(tok_peer)
             current_mcp_user_agent.reset(tok_ua)
+            current_mcp_api_client.reset(tok_client)
             current_mcp_api_client_id.reset(tok_cid)
             current_mcp_api_client_label.reset(tok_clabel)

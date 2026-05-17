@@ -30,9 +30,20 @@ from mcp_proxy.models import (
 )
 from mcp_proxy.npm_install import install_npm_prefix, validate_npm_package_spec
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
+from mcp_proxy.client_policy import (
+    META_TOOL_NAMES,
+    assert_tool_allowed,
+    client_disabled_tools,
+    is_tool_disabled,
+    merge_client_settings,
+)
 from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
-from mcp_proxy.live_mcp_tracker import LiveMcpTracker, live_tool_span
+from mcp_proxy.live_mcp_tracker import (
+    LiveMcpTracker,
+    current_mcp_api_client,
+    live_tool_span,
+)
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
     remove_stdio_meta,
@@ -47,6 +58,16 @@ from mcp_proxy.upstream_inspect import (
 log = logging.getLogger(__name__)
 
 _TRUNC_SUFFIX = " …[truncated]"
+
+
+def _effective_settings(base: Settings) -> Settings:
+    return merge_client_settings(base, current_mcp_api_client.get())
+
+
+def _disabled_for_request() -> frozenset[str]:
+    return client_disabled_tools(current_mcp_api_client.get())
+
+
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
 _ADMIN_SERVER_ID = "mcp-tools-admin"
 
@@ -435,13 +456,20 @@ async def _build_session_tool_list(
     settings: Settings,
     stats_store: ToolCallStatsStore,
 ) -> list[mcp_types.Tool]:
-    tools = build_meta_tool_list(domain_ids, settings)
+    eff = _effective_settings(settings)
+    disabled = _disabled_for_request()
+    tools: list[mcp_types.Tool] = []
+    for t in build_meta_tool_list(domain_ids, eff):
+        if not is_tool_disabled(t.name, disabled):
+            tools.append(t)
     for composite in stats_store.top_keys():
-        row = await _lookup_tool_row(store, settings, composite)
+        if is_tool_disabled(composite, disabled):
+            continue
+        row = await _lookup_tool_row(store, eff, composite)
         if row:
             tools.append(_hot_tool_from_row(row))
         else:
-            tools.append(_fallback_hot_tool(composite, settings))
+            tools.append(_fallback_hot_tool(composite, eff))
     return tools
 
 
@@ -618,7 +646,49 @@ async def _collect_all_tool_defs(
                 s.id,
                 upstream_error_detail(e),
             )
+    disabled = _disabled_for_request()
+    if disabled:
+        combined = [
+            d
+            for d in combined
+            if not is_tool_disabled(str(d.get("toolName", "")), disabled)
+        ]
     return combined
+
+
+async def build_tool_catalog_for_admin(
+    store: ServerConfigStore,
+    settings: Settings,
+) -> list[dict[str, Any]]:
+    """All proxy tools for admin per-client enable/disable UI (ignores client policy)."""
+    meta_desc = {
+        "searchToolsForDomain": "Search tools within one domain (query + pagination).",
+        "searchTool": "Search tools across domains.",
+        "callTool": "Execute an upstream tool by composite toolName.",
+    }
+    catalog: list[dict[str, Any]] = [
+        {
+            "toolName": meta,
+            "kind": "meta",
+            "domain": None,
+            "serverId": None,
+            "description": meta_desc.get(meta, ""),
+        }
+        for meta in sorted(META_TOOL_NAMES)
+    ]
+    defs = await _collect_all_tool_defs(store, settings, None)
+    for row in defs:
+        sid = str(row.get("serverId", ""))
+        catalog.append(
+            {
+                "toolName": str(row.get("toolName", "")),
+                "kind": "admin" if sid == _ADMIN_SERVER_ID else "upstream",
+                "domain": row.get("domain"),
+                "serverId": sid or None,
+                "description": str(row.get("description", "")),
+            }
+        )
+    return catalog
 
 
 def _domain_enum_schema(domain_ids: list[str], description: str) -> dict[str, Any]:
@@ -892,8 +962,9 @@ def build_proxy_mcp_server(
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
+        eff = _effective_settings(settings)
         server.instructions = full_instructions_for_store(
-            store, settings.instructions_max_chars
+            store, eff.instructions_max_chars
         )
         return await _build_session_tool_list(
             store, _domain_ids(), settings, stats_store
@@ -948,6 +1019,9 @@ def build_proxy_mcp_server(
             if name == "callTool"
             else name
         )
+        disabled = _disabled_for_request()
+        if name in hot:
+            assert_tool_allowed(name, disabled)
         async with live_tool_span(
             live_tracker,
             tool_name=display_tool,
@@ -958,11 +1032,16 @@ def build_proxy_mcp_server(
     async def _call_tool_impl(
         name: str, arguments: dict | None
     ) -> list[mcp_types.ContentBlock]:
+        eff = _effective_settings(settings)
+        disabled = _disabled_for_request()
         args = arguments or {}
         hot = frozenset(stats_store.top_keys())
         if name in hot:
+            assert_tool_allowed(name, disabled)
             args = {"toolName": name, "arguments": args}
             name = "callTool"
+
+        assert_tool_allowed(name, disabled)
 
         if name == "searchToolsForDomain":
             dom = args.get("domain")
@@ -1004,7 +1083,7 @@ def build_proxy_mcp_server(
                         ),
                     )
                 )
-            offset, page_limit = _parse_domain_pagination(args, settings)
+            offset, page_limit = _parse_domain_pagination(args, eff)
             defs = await _collect_all_tool_defs(store, settings, dom)
             if list_all:
                 ordered = sorted(defs, key=lambda r: str(r.get("toolName", "")).lower())
@@ -1018,7 +1097,7 @@ def build_proxy_mcp_server(
                 total = len(matches)
                 page = matches[offset : offset + page_limit]
                 mode = "filtered"
-            shaped = [_shape_tool_row_for_llm(d, settings) for d in page]
+            shaped = [_shape_tool_row_for_llm(d, eff) for d in page]
             returned = len(shaped)
             payload: dict[str, Any] = {
                 "mode": mode,
@@ -1035,7 +1114,7 @@ def build_proxy_mcp_server(
             return [
                 mcp_types.TextContent(
                     type="text",
-                    text=_json_discovery(payload, settings),
+                    text=_json_discovery(payload, eff),
                 )
             ]
 
@@ -1070,14 +1149,14 @@ def build_proxy_mcp_server(
             all_defs = await _collect_all_tool_defs(store, settings, dom_filter)
             matches = [d for d in all_defs if _tool_row_matches_query(d, q)]
             matches.sort(key=lambda m: _rank_match_key(m, q))
-            search_max = settings.tool_search_max_matches
+            search_max = eff.tool_search_max_matches
             if search_max > 0:
                 matches = matches[:search_max]
-            shaped = [_shape_tool_row_for_llm(m, settings) for m in matches]
+            shaped = [_shape_tool_row_for_llm(m, eff) for m in matches]
             return [
                 mcp_types.TextContent(
                     type="text",
-                    text=_json_discovery(shaped, settings),
+                    text=_json_discovery(shaped, eff),
                 )
             ]
 
@@ -1099,6 +1178,7 @@ def build_proxy_mcp_server(
                     )
                 )
             composite_key = tool_name.strip()
+            assert_tool_allowed(composite_key, disabled)
             sid, orig = _split_proxy_tool_name(composite_key)
             if sid == _ADMIN_SERVER_ID:
                 out = await _call_tool_impl(orig, tool_args)
@@ -1167,7 +1247,7 @@ def build_proxy_mcp_server(
             stats_store.record_success(composite_key)
             return _truncate_call_tool_content(
                 list(result.content or []),
-                settings.call_tool_response_text_max_chars,
+                eff.call_tool_response_text_max_chars,
             )
 
         if name == "listServers":

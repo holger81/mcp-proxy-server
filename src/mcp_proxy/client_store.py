@@ -15,6 +15,29 @@ from pydantic import BaseModel, Field, field_validator
 from mcp_proxy.models import validate_slug_id
 
 
+class ClientLlmLimits(BaseModel):
+    """Optional per-client overrides; ``None`` fields inherit global ``Settings``."""
+
+    tool_search_max_matches: int | None = Field(default=None, ge=0, le=500)
+    tool_domain_default_limit: int | None = Field(default=None, ge=1, le=500)
+    tool_domain_max_limit: int | None = Field(default=None, ge=1, le=2000)
+    tool_description_max_chars: int | None = Field(default=None, ge=0, le=100_000)
+    tool_server_llm_context_max_chars: int | None = Field(
+        default=None, ge=0, le=100_000
+    )
+    tool_input_schema_max_chars: int | None = Field(default=None, ge=0, le=500_000)
+    call_tool_response_text_max_chars: int | None = Field(
+        default=None, ge=0, le=2_000_000
+    )
+    tool_discovery_compact_json: bool | None = None
+    instructions_max_chars: int | None = Field(default=None, ge=0, le=500_000)
+
+    def has_any_override(self) -> bool:
+        return any(
+            getattr(self, f) is not None for f in type(self).model_fields
+        )
+
+
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -24,11 +47,26 @@ class ApiClientRecord(BaseModel):
     label: str = Field(min_length=1, max_length=200)
     created_at: str
     token_sha256_hex: str = Field(min_length=64, max_length=64)
+    llm_limits: ClientLlmLimits = Field(default_factory=ClientLlmLimits)
+    disabled_tools: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod
     def id_slug(cls, v: str) -> str:
         return validate_slug_id(v)
+
+    @field_validator("disabled_tools")
+    @classmethod
+    def normalize_disabled_tools(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in v:
+            name = str(raw).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out
 
 
 class ApiClientListFile(BaseModel):
@@ -49,7 +87,12 @@ class ClientTokenStore:
         text = self._path.read_text(encoding="utf-8")
         if not text.strip():
             return ApiClientListFile()
-        return ApiClientListFile.model_validate(json.loads(text))
+        raw = json.loads(text)
+        # Backfill new fields for clients created before per-client policy existed.
+        for row in raw.get("clients") or []:
+            row.setdefault("llm_limits", {})
+            row.setdefault("disabled_tools", [])
+        return ApiClientListFile.model_validate(raw)
 
     def _write_unlocked(self, doc: ApiClientListFile) -> None:
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -64,9 +107,24 @@ class ClientTokenStore:
         with self._lock:
             doc = self._read()
         return [
-            {"id": c.id, "label": c.label, "created_at": c.created_at}
+            {
+                "id": c.id,
+                "label": c.label,
+                "created_at": c.created_at,
+                "has_llm_overrides": c.llm_limits.has_any_override(),
+                "disabled_tools_count": len(c.disabled_tools),
+            }
             for c in doc.clients
         ]
+
+    def get(self, client_id: str) -> ApiClientRecord | None:
+        cid = validate_slug_id(client_id)
+        with self._lock:
+            doc = self._read()
+            for c in doc.clients:
+                if c.id == cid:
+                    return c.model_copy(deep=True)
+        return None
 
     def create(self, label: str) -> tuple[ApiClientRecord, str]:
         """Return (stored record with hash, plaintext bearer token shown once)."""
@@ -91,6 +149,34 @@ class ClientTokenStore:
             self._write_unlocked(doc)
         return record, plain
 
+    def update(
+        self,
+        client_id: str,
+        *,
+        label: str | None = None,
+        llm_limits: ClientLlmLimits | None = None,
+        disabled_tools: list[str] | None = None,
+    ) -> ApiClientRecord | None:
+        cid = validate_slug_id(client_id)
+        with self._lock:
+            doc = self._read()
+            for i, c in enumerate(doc.clients):
+                if c.id != cid:
+                    continue
+                if label is not None:
+                    label = label.strip()
+                    if not label:
+                        raise ValueError("label is required")
+                    c.label = label[:200]
+                if llm_limits is not None:
+                    c.llm_limits = llm_limits
+                if disabled_tools is not None:
+                    c.disabled_tools = disabled_tools
+                doc.clients[i] = c
+                self._write_unlocked(doc)
+                return c.model_copy(deep=True)
+        return None
+
     def verify_bearer(self, token: str) -> bool:
         if not token:
             return False
@@ -110,7 +196,7 @@ class ClientTokenStore:
             doc = self._read()
             for c in doc.clients:
                 if secrets.compare_digest(digest, c.token_sha256_hex):
-                    return c
+                    return c.model_copy(deep=True)
         return None
 
     def remove(self, client_id: str) -> bool:
@@ -123,3 +209,12 @@ class ClientTokenStore:
                 return False
             self._write_unlocked(doc)
             return True
+
+    def to_admin_dict(self, record: ApiClientRecord) -> dict[str, Any]:
+        return {
+            "id": record.id,
+            "label": record.label,
+            "created_at": record.created_at,
+            "llm_limits": record.llm_limits.model_dump(mode="json"),
+            "disabled_tools": list(record.disabled_tools),
+        }
