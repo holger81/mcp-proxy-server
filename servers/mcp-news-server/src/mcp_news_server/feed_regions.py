@@ -11,6 +11,7 @@ _GERMANY_URL_HINTS = (
     "germany/index~rss",
 )
 
+_LOCAL_LABEL_MARKERS = ("[local]",)
 _BAY_AREA_LABEL_MARKERS = ("[bay area]", "bay area —", "bay area -")
 _SAN_JOSE_LABEL_MARKERS = ("[san jose]", "san jose —", "san jose -")
 _EVERGREEN_LABEL_MARKERS = ("[evergreen]", "evergreen —", "evergreen -")
@@ -18,8 +19,11 @@ _EVERGREEN_LABEL_MARKERS = ("[evergreen]", "evergreen —", "evergreen -")
 _BAY_AREA_URL_HINTS = (
     "sfchronicle.com",
     "kqed.org",
-    "eastbaytimes.com",
-    "mercurynews.com",
+    "sanjosespotlight.com",
+    "nbcbayarea.com",
+    "abc7news.com",
+    "ktvu.com",
+    "calmatters.org",
     "bay-area",
 )
 
@@ -36,6 +40,8 @@ def feed_is_germany(f: FeedEntry) -> bool:
 def feed_is_bay_area(f: FeedEntry) -> bool:
     """Heuristic: label tag, or Bay Area outlet URL hints."""
     lab = (f.label or "").strip().lower()
+    if any(m in lab for m in _LOCAL_LABEL_MARKERS):
+        return True
     if any(m in lab for m in _BAY_AREA_LABEL_MARKERS):
         return True
     if any(m in lab for m in _SAN_JOSE_LABEL_MARKERS):

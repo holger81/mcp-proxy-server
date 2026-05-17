@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from mcp_news_server.dedupe import canonical_url
+from mcp_news_server.feed_migrations import migrate_feeds
 from mcp_news_server.models import FeedEntry
 
 _DEFAULT_REL = Path(".local/share/mcp-news-server")
@@ -46,7 +47,10 @@ class FeedStore:
             label = str(row.get("label", "") or "").strip()
             enabled = bool(row.get("enabled", True))
             out.append(FeedEntry(url=url, label=label, enabled=enabled))
-        return out
+        migrated, changed = migrate_feeds(out)
+        if changed:
+            self.save(migrated)
+        return migrated
 
     def save(self, feeds: list[FeedEntry]) -> None:
         self._ensure()

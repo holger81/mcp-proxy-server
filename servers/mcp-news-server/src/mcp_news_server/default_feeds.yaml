@@ -42,19 +42,26 @@ feeds:
     label: "[California] Los Angeles Times — California"
     enabled: true
 
-  # --- San Francisco Bay Area / South Bay ---
-  - url: "https://www.mercurynews.com/feed/"
-    label: "[Bay Area] The Mercury News"
-    enabled: true
+  # --- San Francisco Bay Area / South Bay (local digest: news_local) ---
+  # Mercury News / East Bay Times block automated RSS (403); use TV/regional feeds below.
   - url: "https://sanjosespotlight.com/feed/"
     label: "[San Jose] San José Spotlight"
     enabled: true
-  - url: "https://www.sfchronicle.com/bay-area/feed/"
+  - url: "https://www.sfchronicle.com/rss/feed/Bay-Area-News-448.php"
     label: "[Bay Area] San Francisco Chronicle — Bay Area"
     enabled: true
   - url: "https://www.kqed.org/news/feed/rss"
     label: "[Bay Area] KQED — News"
     enabled: true
-  - url: "https://www.eastbaytimes.com/feed/"
-    label: "[Bay Area] East Bay Times"
+  - url: "https://www.nbcbayarea.com/?rss=y"
+    label: "[Bay Area] NBC Bay Area"
+    enabled: true
+  - url: "https://abc7news.com/feed/"
+    label: "[Bay Area] ABC7 Bay Area"
+    enabled: true
+  - url: "https://www.ktvu.com/rss.xml"
+    label: "[Bay Area] KTVU Fox 2"
+    enabled: true
+  - url: "https://calmatters.org/feed/"
+    label: "[Local] CalMatters (California)"
     enabled: true

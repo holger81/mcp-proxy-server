@@ -5,8 +5,13 @@ import os
 import httpx
 
 _DEFAULT_UA = (
-    "mcp-news-server/0.1 (+https://github.com/modelcontextprotocol; news curation MCP)"
+    "Mozilla/5.0 (compatible; mcp-news-server/0.1; +https://github.com/modelcontextprotocol)"
 )
+_DEFAULT_HEADERS = {
+    "User-Agent": _DEFAULT_UA,
+    "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 def http_timeout_s() -> float:
@@ -22,6 +27,6 @@ def http_timeout_s() -> float:
 def async_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=http_timeout_s(),
-        headers={"User-Agent": _DEFAULT_UA},
+        headers=dict(_DEFAULT_HEADERS),
         follow_redirects=True,
     )
