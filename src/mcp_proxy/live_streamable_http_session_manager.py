@@ -12,6 +12,7 @@ flow) with a small wrapper around ``await self.app.run(...)``.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from http import HTTPStatus
 from uuid import uuid4
 
@@ -31,6 +32,19 @@ from mcp.types import INVALID_REQUEST, ErrorData, JSONRPCError
 from mcp_proxy.live_mcp_tracker import current_mcp_session_id
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _bind_mcp_session(session_id: str | None):
+    """Ensure tool handlers see the MCP session id (HTTP worker vs background task)."""
+    if not session_id:
+        yield
+        return
+    tok = current_mcp_session_id.set(session_id)
+    try:
+        yield
+    finally:
+        current_mcp_session_id.reset(tok)
 
 
 class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
@@ -88,7 +102,9 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
         assert self._task_group is not None
         await self._task_group.start(run_stateless_server)
 
-        await http_transport.handle_request(scope, receive, send)
+        ephemeral_session_id = uuid4().hex
+        with _bind_mcp_session(ephemeral_session_id):
+            await http_transport.handle_request(scope, receive, send)
 
         await http_transport.terminate()
 
@@ -114,7 +130,8 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
                 transport.idle_scope.deadline = (
                     anyio.current_time() + self.session_idle_timeout
                 )
-            await transport.handle_request(scope, receive, send)
+            with _bind_mcp_session(transport.mcp_session_id):
+                await transport.handle_request(scope, receive, send)
             return
 
         if request_mcp_session_id is None:
@@ -187,7 +204,8 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
                 assert self._task_group is not None
                 await self._task_group.start(run_server)
 
-                await http_transport.handle_request(scope, receive, send)
+                with _bind_mcp_session(http_transport.mcp_session_id):
+                    await http_transport.handle_request(scope, receive, send)
         else:
             error_response = JSONRPCError(
                 jsonrpc="2.0",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +38,13 @@ class LiveToolCall:
 
 
 @dataclass(slots=True)
+class LiveRecentCall:
+    tool_name: str
+    finished_at_ms: int
+    duration_ms: int
+
+
+@dataclass(slots=True)
 class LiveMcpClient:
     session_id: str
     peer: str | None = None
@@ -46,6 +54,7 @@ class LiveMcpClient:
     first_seen_at_ms: int = field(default_factory=_now_ms)
     last_seen_at_ms: int = field(default_factory=_now_ms)
     active_calls: dict[str, LiveToolCall] = field(default_factory=dict)
+    recent_calls: list[LiveRecentCall] = field(default_factory=list)
 
 
 class LiveMcpTracker:
@@ -116,11 +125,37 @@ class LiveMcpTracker:
         return key
 
     async def end_tool_call(self, *, session_id: str, call_id: str) -> None:
+        now = _now_ms()
         async with self._lock:
             c = self._clients.get(session_id)
             if c is None:
                 return
-            c.active_calls.pop(call_id, None)
+            call = c.active_calls.pop(call_id, None)
+            if call is not None:
+                c.recent_calls.append(
+                    LiveRecentCall(
+                        tool_name=call.tool_name,
+                        finished_at_ms=now,
+                        duration_ms=max(0, now - call.started_at_ms),
+                    )
+                )
+                cutoff = now - 120_000
+                c.recent_calls = [
+                    r for r in c.recent_calls if r.finished_at_ms >= cutoff
+                ][-12:]
+
+    async def latest_active_session_id(self, *, within_ms: int = 15_000) -> str | None:
+        """Fallback when ContextVar session id is missing (tool runs off HTTP task)."""
+        now = _now_ms()
+        cutoff = now - max(1, int(within_ms))
+        async with self._lock:
+            best_id: str | None = None
+            best_ts = 0
+            for c in self._clients.values():
+                if c.last_seen_at_ms >= cutoff and c.last_seen_at_ms >= best_ts:
+                    best_ts = c.last_seen_at_ms
+                    best_id = c.session_id
+            return best_id
 
     async def snapshot(self, *, active_within_ms: int = 90_000) -> dict[str, Any]:
         """Return a JSON-serializable snapshot for the admin UI."""
@@ -143,6 +178,16 @@ class LiveMcpTracker:
                         }
                     )
                 calls.sort(key=lambda x: int(x["started_at_ms"]))
+                recent = [
+                    {
+                        "tool": r.tool_name,
+                        "finished_at_ms": r.finished_at_ms,
+                        "duration_ms": r.duration_ms,
+                        "ago_ms": max(0, now - r.finished_at_ms),
+                    }
+                    for r in c.recent_calls
+                ]
+                recent.sort(key=lambda x: int(x["finished_at_ms"]), reverse=True)
                 out.append(
                     {
                         "session_id": c.session_id,
@@ -154,7 +199,36 @@ class LiveMcpTracker:
                         "last_seen_at_ms": c.last_seen_at_ms,
                         "idle_ms": max(0, now - c.last_seen_at_ms),
                         "active_calls": calls,
+                        "recent_calls": recent,
                     }
                 )
         out.sort(key=lambda x: int(x["last_seen_at_ms"]), reverse=True)
         return {"now_ms": now, "clients": out}
+
+
+@asynccontextmanager
+async def live_tool_span(
+    tracker: LiveMcpTracker | None,
+    *,
+    tool_name: str,
+    arguments: dict[str, Any] | None,
+):
+    """Track in-flight tool work for the admin Live clients panel."""
+    if tracker is None:
+        yield
+        return
+    session_id = current_mcp_session_id.get()
+    if not session_id:
+        session_id = await tracker.latest_active_session_id()
+    if not session_id:
+        yield
+        return
+    call_id = await tracker.begin_tool_call(
+        session_id=session_id,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+    try:
+        yield
+    finally:
+        await tracker.end_tool_call(session_id=session_id, call_id=call_id)
