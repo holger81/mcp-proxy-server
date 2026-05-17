@@ -20,6 +20,7 @@ class UpdateClientBody(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=200)
     llm_limits: ClientLlmLimits | None = None
     disabled_tools: list[str] | None = None
+    instructions: str | None = Field(default=None, max_length=12000)
 
 
 @router.get("")
@@ -62,6 +63,7 @@ async def update_client(
             label=body.label,
             llm_limits=body.llm_limits,
             disabled_tools=body.disabled_tools,
+            instructions=body.instructions,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

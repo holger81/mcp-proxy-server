@@ -524,10 +524,13 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
         <h3>Configure client <code id="client-config-id"></code></h3>
         <p class="hint">
           LLM limits left blank use server defaults (from environment / docker-compose). Unchecked tools are
-          disabled for this client’s bearer token only.
+          disabled for this client’s bearer token only. Instructions are appended to the MCP
+          <code>instructions</code> field for this client’s bearer token only.
         </p>
         <label for="client-config-label">Label</label>
         <input id="client-config-label" type="text" autocomplete="off" />
+        <label for="client-config-instructions">Instructions <span class="hint">(markdown ok, max 12000 chars)</span></label>
+        <textarea id="client-config-instructions" rows="6" placeholder="e.g. Prefer smart-home domain for lights. Never call mail tools unless asked."></textarea>
         <h4 style="margin-top: 1rem">LLM context limits <span class="hint">(optional overrides)</span></h4>
         <div id="client-llm-limits-form" class="client-llm-grid"></div>
         <h4 style="margin-top: 1rem">Tools</h4>
@@ -1467,6 +1470,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
               return;
             }
             document.getElementById("client-config-label").value = data.label || "";
+            document.getElementById("client-config-instructions").value = data.instructions || "";
             buildClientLlmLimitsForm(data.global_llm_limits, data.llm_limits);
             buildClientToolsCheckboxes(catalog.tools || [], new Set(data.disabled_tools || []));
             panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1505,6 +1509,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             const parts = [];
             if (c.has_llm_overrides) parts.push("custom limits");
             if (c.disabled_tools_count) parts.push(c.disabled_tools_count + " off");
+            if (c.has_instructions) parts.push("instructions");
             tdP.textContent = parts.length ? parts.join(", ") : "defaults";
             const tdA = document.createElement("td");
             const cfg = document.createElement("button");
@@ -1582,8 +1587,14 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             msg.innerHTML = '<div class="msg err">Label is required.</div>';
             return;
           }
+          const instructions = document.getElementById("client-config-instructions").value;
+          if (instructions.length > 12000) {
+            msg.innerHTML = '<div class="msg err">Instructions must be at most 12000 characters.</div>';
+            return;
+          }
           const body = {
             label,
+            instructions,
             llm_limits: readClientLlmLimitsFromForm(),
             disabled_tools: readDisabledToolsFromForm(),
           };

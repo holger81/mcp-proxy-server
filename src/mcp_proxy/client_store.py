@@ -49,6 +49,11 @@ class ApiClientRecord(BaseModel):
     token_sha256_hex: str = Field(min_length=64, max_length=64)
     llm_limits: ClientLlmLimits = Field(default_factory=ClientLlmLimits)
     disabled_tools: list[str] = Field(default_factory=list)
+    instructions: str = Field(
+        default="",
+        max_length=12000,
+        description="Optional text appended to MCP server instructions for this API client only.",
+    )
 
     @field_validator("id")
     @classmethod
@@ -92,6 +97,7 @@ class ClientTokenStore:
         for row in raw.get("clients") or []:
             row.setdefault("llm_limits", {})
             row.setdefault("disabled_tools", [])
+            row.setdefault("instructions", "")
         return ApiClientListFile.model_validate(raw)
 
     def _write_unlocked(self, doc: ApiClientListFile) -> None:
@@ -113,6 +119,7 @@ class ClientTokenStore:
                 "created_at": c.created_at,
                 "has_llm_overrides": c.llm_limits.has_any_override(),
                 "disabled_tools_count": len(c.disabled_tools),
+                "has_instructions": bool((c.instructions or "").strip()),
             }
             for c in doc.clients
         ]
@@ -156,6 +163,7 @@ class ClientTokenStore:
         label: str | None = None,
         llm_limits: ClientLlmLimits | None = None,
         disabled_tools: list[str] | None = None,
+        instructions: str | None = None,
     ) -> ApiClientRecord | None:
         cid = validate_slug_id(client_id)
         with self._lock:
@@ -172,6 +180,8 @@ class ClientTokenStore:
                     c.llm_limits = llm_limits
                 if disabled_tools is not None:
                     c.disabled_tools = disabled_tools
+                if instructions is not None:
+                    c.instructions = instructions.strip()[:12000]
                 doc.clients[i] = c
                 self._write_unlocked(doc)
                 return c.model_copy(deep=True)
@@ -217,4 +227,5 @@ class ClientTokenStore:
             "created_at": record.created_at,
             "llm_limits": record.llm_limits.model_dump(mode="json"),
             "disabled_tools": list(record.disabled_tools),
+            "instructions": record.instructions,
         }

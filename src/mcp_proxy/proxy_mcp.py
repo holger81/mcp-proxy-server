@@ -736,7 +736,10 @@ def _base_instructions() -> str:
 
 
 def full_instructions_for_store(
-    store: ServerConfigStore, instructions_max_chars: int = 0
+    store: ServerConfigStore,
+    instructions_max_chars: int = 0,
+    *,
+    client_instructions: str = "",
 ) -> str:
     parts = [
         _base_instructions(),
@@ -759,11 +762,34 @@ def full_instructions_for_store(
             '_No per-server notes yet. Configure "LLM / instructions" for each server in the admin UI._'
         )
         parts.append("")
+    client_note = (client_instructions or "").strip()
+    if client_note:
+        parts.extend(
+            [
+                "## Client-specific instructions (admin)",
+                "",
+                client_note,
+                "",
+            ]
+        )
     text = "\n".join(parts)
     return (
         _truncate_text(text, instructions_max_chars)
         if instructions_max_chars > 0
         else text
+    )
+
+
+def _instructions_for_mcp_request(
+    store: ServerConfigStore, settings: Settings
+) -> str:
+    eff = _effective_settings(settings)
+    client = current_mcp_api_client.get()
+    client_note = (client.instructions or "").strip() if client else ""
+    return full_instructions_for_store(
+        store,
+        eff.instructions_max_chars,
+        client_instructions=client_note,
     )
 
 
@@ -948,9 +974,7 @@ def build_proxy_mcp_server(
     server = Server(
         "mcp-proxy",
         version="0.1.0",
-        instructions=full_instructions_for_store(
-            store, settings.instructions_max_chars
-        ),
+        instructions=_instructions_for_mcp_request(store, settings),
     )
 
     def _domain_ids() -> list[str]:
@@ -962,10 +986,7 @@ def build_proxy_mcp_server(
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        eff = _effective_settings(settings)
-        server.instructions = full_instructions_for_store(
-            store, eff.instructions_max_chars
-        )
+        server.instructions = _instructions_for_mcp_request(store, settings)
         return await _build_session_tool_list(
             store, _domain_ids(), settings, stats_store
         )
