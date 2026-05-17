@@ -1449,13 +1449,26 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           return disabled;
         }
 
-        async function openClientConfig(clientId) {
+        function formatClientConfigTitle(label, clientId) {
+          const lab = (label || "").trim();
+          if (lab) return lab + " (" + clientId + ")";
+          return clientId;
+        }
+
+        function setClientConfigHeading(label, clientId) {
+          document.getElementById("client-config-id").textContent = formatClientConfigTitle(
+            label,
+            clientId
+          );
+        }
+
+        async function openClientConfig(clientId, labelHint) {
           clientConfigEditingId = clientId;
           const panel = document.getElementById("client-config-panel");
           const msg = document.getElementById("client-config-msg");
           msg.innerHTML = "";
           panel.classList.remove("hidden");
-          document.getElementById("client-config-id").textContent = clientId;
+          setClientConfigHeading(labelHint || "", clientId);
           document.getElementById("client-tools-loading").classList.remove("hidden");
           document.getElementById("client-tools-list").classList.add("hidden");
           try {
@@ -1470,6 +1483,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
               return;
             }
             document.getElementById("client-config-label").value = data.label || "";
+            setClientConfigHeading(data.label, clientId);
             document.getElementById("client-config-instructions").value = data.instructions || "";
             buildClientLlmLimitsForm(data.global_llm_limits, data.llm_limits);
             buildClientToolsCheckboxes(catalog.tools || [], new Set(data.disabled_tools || []));
@@ -1516,7 +1530,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             cfg.type = "button";
             cfg.className = "secondary small";
             cfg.textContent = "Configure";
-            cfg.addEventListener("click", () => openClientConfig(c.id));
+            cfg.addEventListener("click", () => openClientConfig(c.id, c.label));
             const del = document.createElement("button");
             del.type = "button";
             del.className = "danger";
