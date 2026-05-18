@@ -29,7 +29,7 @@ export TMP DEST
 python3 <<'PY'
 import json
 import os
-import re
+import shutil
 import sys
 import urllib.error
 import urllib.request
@@ -95,7 +95,8 @@ if not os.path.isfile(src):
     sys.exit(1)
 
 out = os.path.join(dest, bin_name)
-os.replace(src, out)
+# copy2 (not rename from /tmp): /data is often a Docker volume on another filesystem.
+shutil.copy2(src, out)
 os.chmod(out, 0o755)
 print(f"Installed portainer-mcp-enhanced ({tag}) -> {out}")
 PY
