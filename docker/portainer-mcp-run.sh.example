@@ -1,0 +1,8 @@
+#!/bin/sh
+# Copy to /data/portainer-mcp/run.sh (chmod +x) and register command: /data/portainer-mcp/run.sh
+# Set PORTAINER_SERVER and PORTAINER_TOKEN in the manual stdio server's Environment (JSON).
+set -e
+exec /data/portainer-mcp/portainer-mcp-enhanced \
+  -server "$PORTAINER_SERVER" \
+  -token "$PORTAINER_TOKEN" \
+  "$@"

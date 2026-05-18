@@ -468,7 +468,9 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
         <code>initialize</code> result (protocol features / “signals” from the handshake). PyPI/npm stdio installs show
         package status and <strong>Upgrade</strong>. Manual stdio shows “Not managed”; if the executable is
         <code>mail-mcp</code>, use <strong>Update mail-mcp binary</strong> (writes <code>/data/mail-mcp/</code> on amd64
-        Docker — same as <code>POST /api/mail-mcp/update</code>).
+        Docker — same as <code>POST /api/mail-mcp/update</code>). For
+        <code>portainer-mcp-enhanced</code>, use <strong>Update portainer-mcp binary</strong> (writes
+        <code>/data/portainer-mcp/</code> — <code>POST /api/portainer-mcp/update</code>).
       </p>
       <div id="list-wrap">
         <p id="list-empty" class="hint hidden">No servers yet. Use the <em>Register server</em> tab.</p>
@@ -722,6 +724,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
         const apiLlmPreview = "/api/mcp-llm-preview";
         const apiLive = "/api/mcp-live";
         const apiMailMcp = "/api/mail-mcp";
+        const apiPortainerMcp = "/api/portainer-mcp";
 
         let cachedDomains = [];
 
@@ -969,6 +972,17 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             .pop()
             .toLowerCase();
           return base === "mail-mcp" || base === "mail-mcp.exe";
+        }
+
+        function isPortainerMcpCommand(s) {
+          const c = s.command;
+          if (!Array.isArray(c) || !c.length) return false;
+          const base = String(c[0])
+            .replace(/\\/g, "/")
+            .split("/")
+            .pop()
+            .toLowerCase();
+          return base === "portainer-mcp-enhanced" || base === "portainer-mcp-enhanced.exe";
         }
 
         async function upgradeStdioServer(serverId, pkgPre) {
@@ -1278,6 +1292,44 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
                       else if (d && typeof d === "object" && d.output) detail = d.output;
                       else detail = JSON.stringify(data, null, 2);
                       pkgPre.textContent = "mail-mcp update failed.";
+                      inspectOut.classList.remove("hidden");
+                      inspectOut.textContent = detail;
+                      return;
+                    }
+                    const baseLine = formatStdioStatus(st.data);
+                    pkgPre.textContent =
+                      baseLine + "\n\n--- install log ---\n" + (data.output || "").trim();
+                    inspectOut.classList.remove("hidden");
+                    inspectOut.textContent = JSON.stringify(data, null, 2);
+                  });
+                  stdioWrap.appendChild(ub);
+                } else if (isPortainerMcpCommand(s)) {
+                  const ub = document.createElement("button");
+                  ub.type = "button";
+                  ub.className = "small secondary";
+                  ub.textContent = "Update portainer-mcp binary";
+                  ub.addEventListener("click", async () => {
+                    const ver = prompt("portainer-mcp-enhanced release tag or latest:", "latest");
+                    if (ver === null) return;
+                    const vt = ver.trim();
+                    if (!vt) {
+                      alert("Enter a version or latest.");
+                      return;
+                    }
+                    pkgPre.textContent = "Downloading portainer-mcp-enhanced…";
+                    const res = await apiFetch(apiPortainerMcp + "/update", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ version: vt }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      let detail = "";
+                      const d = data.detail;
+                      if (typeof d === "string") detail = d;
+                      else if (d && typeof d === "object" && d.output) detail = d.output;
+                      else detail = JSON.stringify(data, null, 2);
+                      pkgPre.textContent = "portainer-mcp update failed.";
                       inspectOut.classList.remove("hidden");
                       inspectOut.textContent = detail;
                       return;

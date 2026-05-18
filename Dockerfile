@@ -61,7 +61,10 @@ RUN mkdir -p /opt/mail-mcp \
     fi
 
 COPY docker/mail-mcp-runner.sh /usr/local/bin/mail-mcp
-RUN chmod +x /usr/local/bin/mail-mcp /app/docker/install-mail-mcp-release.sh
+COPY docker/portainer-mcp-runner.sh /usr/local/bin/portainer-mcp-enhanced
+RUN chmod +x /usr/local/bin/mail-mcp /usr/local/bin/portainer-mcp-enhanced \
+    /app/docker/install-mail-mcp-release.sh \
+    /app/docker/install-portainer-mcp-release.sh
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh \

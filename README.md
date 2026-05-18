@@ -235,6 +235,23 @@ docker compose exec mcp-proxy sh -c \
 
 Use **`MAIL_MCP_VERSION=latest`** to pull whatever GitHub marks as the **[latest release](https://github.com/tecnologicachile/mail-mcp/releases/latest)**. Otherwise set it to a **[release tag](https://github.com/tecnologicachile/mail-mcp/releases)** (e.g. `v0.4.5`). ARM64 Linux images have **no** upstream prebuilt binary; use **`platform: linux/amd64`** for the service or install manually.
 
+### Portainer MCP Enhanced (optional binary under `/data`)
+
+[portainer-mcp-enhanced](https://github.com/jmrplens/portainer-mcp-enhanced) is **not** baked into the image by default. Install or upgrade the Linux binary into the **`/data`** volume (survives image rebuilds):
+
+- **Admin → Explore servers** → **Update portainer-mcp binary** (after you register a manual stdio server whose command is `portainer-mcp-enhanced`), or
+- **`POST /api/portainer-mcp/update`** with body `{"version":"latest"}` or `{"version":"v0.8.0"}` (admin session required), or
+- Inside the container:
+
+```bash
+PORTAINER_MCP_VERSION=latest PORTAINER_MCP_INSTALL_DEST=/data/portainer-mcp \
+  sh /app/docker/install-portainer-mcp-release.sh
+```
+
+The image provides **`/usr/local/bin/portainer-mcp-enhanced`** as a **runner** that executes **`/data/portainer-mcp/portainer-mcp-enhanced`** when present.
+
+**Register** (Admin → manual stdio): server id e.g. `portainer-mcp`, domain `portainer`, command **`portainer-mcp-enhanced`** with flags, or use **`/data/portainer-mcp/run.sh`** and env vars — see **`docker/portainer-mcp-run.sh.example`**. Get a Portainer API key under **My Account → API Keys**. The proxy container must reach your Portainer URL; use **`-skip-tls-verify`** in the command for self-signed certs (upstream flag).
+
 ---
 ### 🌐 Open
 

@@ -5,6 +5,7 @@ from mcp_proxy.api.catalog import router as catalog_router
 from mcp_proxy.api.clients import router as clients_router
 from mcp_proxy.api.domains import router as domains_router
 from mcp_proxy.api.mail_mcp import router as mail_mcp_router
+from mcp_proxy.api.portainer_mcp import router as portainer_mcp_router
 from mcp_proxy.api.observability import router as observability_router
 from mcp_proxy.api.servers import router as servers_router
 from mcp_proxy.security import require_admin_session, require_api_access
@@ -29,4 +30,5 @@ _admin.include_router(clients_router)
 _admin.include_router(domains_router)
 _admin.include_router(observability_router)
 _admin.include_router(mail_mcp_router)
+_admin.include_router(portainer_mcp_router)
 router.include_router(_admin)
