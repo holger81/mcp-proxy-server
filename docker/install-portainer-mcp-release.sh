@@ -1,5 +1,6 @@
 #!/bin/sh
 # Download portainer-mcp-enhanced Linux release from GitHub into /data/portainer-mcp/.
+# Does not use api.github.com (avoids unauthenticated rate limits in Docker).
 # Usage:
 #   PORTAINER_MCP_VERSION=v0.8.0 ./install-portainer-mcp-release.sh
 #   PORTAINER_MCP_VERSION=latest ./install-portainer-mcp-release.sh
@@ -20,83 +21,37 @@ case "$ARCH" in
     exit 1
     ;;
 esac
-export PORTAINER_MCP_ARCH_SUFFIX="$ARCH_SUFFIX"
 
 mkdir -p "$DEST" "$TMP"
 trap 'rm -rf "$TMP"' EXIT
-export TMP DEST
 
-python3 <<'PY'
-import json
-import os
-import shutil
-import sys
-import urllib.error
-import urllib.request
+if [ "$VERSION" = "latest" ]; then
+  TAG_URL="$(curl -fsSI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+  TAG="${TAG_URL##*/}"
+  if [ -z "$TAG" ] || [ "$TAG" = "latest" ]; then
+    echo "portainer-mcp-enhanced: could not resolve latest release tag from GitHub redirect." >&2
+    echo "Use PORTAINER_MCP_VERSION=v0.8.0 (or another tag) instead." >&2
+    exit 1
+  fi
+  echo "Resolved latest release tag: ${TAG}"
+else
+  case "$VERSION" in
+    v*) TAG="$VERSION" ;;
+    *) TAG="v${VERSION}" ;;
+  esac
+fi
 
-version = os.environ["PORTAINER_MCP_VERSION"].strip()
-arch_suffix = os.environ["PORTAINER_MCP_ARCH_SUFFIX"]
-repo = os.environ.get("PORTAINER_MCP_REPO", "jmrplens/portainer-mcp-enhanced")
-tmp = os.environ["TMP"]
-dest = os.environ["DEST"]
+VER="${TAG#v}"
+ARCHIVE="portainer-mcp-enhanced_${VER}_${ARCH_SUFFIX}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
 
-if version == "latest":
-    api_url = f"https://api.github.com/repos/{repo}/releases/latest"
-else:
-    api_url = f"https://api.github.com/repos/{repo}/releases/tags/{version}"
+echo "Downloading ${ARCHIVE} (${TAG})…"
+if ! curl -fsSL "$URL" -o "$TMP/$ARCHIVE"; then
+  echo "portainer-mcp-enhanced: download failed for ${URL}" >&2
+  exit 1
+fi
 
-req = urllib.request.Request(
-    api_url,
-    headers={"Accept": "application/vnd.github+json", "User-Agent": "mcp-proxy-install"},
-)
-try:
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        release = json.load(resp)
-except urllib.error.HTTPError as e:
-    print(f"GitHub API error: {e.code} {e.reason} for {api_url}", file=sys.stderr)
-    sys.exit(1)
-
-tag = release.get("tag_name") or version
-assets = release.get("assets") or []
-needle = f"_{arch_suffix}.tar.gz"
-match = None
-for a in assets:
-    name = a.get("name") or ""
-    if name.endswith(needle) and "portainer-mcp-enhanced" in name:
-        match = a
-        break
-if not match:
-    names = ", ".join(sorted(a.get("name", "") for a in assets))
-    print(
-        f"No asset matching *{needle} in release {tag}. Assets: {names}",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-
-url = match["browser_download_url"]
-archive_name = match["name"]
-archive_path = os.path.join(tmp, archive_name)
-
-print(f"Downloading {archive_name} ({tag})…")
-with urllib.request.urlopen(url, timeout=300) as resp:
-    data = resp.read()
-with open(archive_path, "wb") as f:
-    f.write(data)
-
-import tarfile
-
-with tarfile.open(archive_path, "r:gz") as tf:
-    tf.extractall(tmp, filter="data")
-
-bin_name = "portainer-mcp-enhanced"
-src = os.path.join(tmp, bin_name)
-if not os.path.isfile(src):
-    print(f"Expected binary {bin_name} in archive", file=sys.stderr)
-    sys.exit(1)
-
-out = os.path.join(dest, bin_name)
-# copy2 (not rename from /tmp): /data is often a Docker volume on another filesystem.
-shutil.copy2(src, out)
-os.chmod(out, 0o755)
-print(f"Installed portainer-mcp-enhanced ({tag}) -> {out}")
-PY
+tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
+install -m 0755 "$TMP/portainer-mcp-enhanced" "$DEST/portainer-mcp-enhanced"
+echo "Installed portainer-mcp-enhanced (${TAG}) -> ${DEST}/portainer-mcp-enhanced"

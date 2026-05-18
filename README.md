@@ -248,6 +248,8 @@ PORTAINER_MCP_VERSION=latest PORTAINER_MCP_INSTALL_DEST=/data/portainer-mcp \
   sh /app/docker/install-portainer-mcp-release.sh
 ```
 
+If GitHub returns **403 rate limit exceeded**, use a pinned tag (`PORTAINER_MCP_VERSION=v0.8.0`) or set **`GITHUB_TOKEN`** / **`GH_TOKEN`** in the container env (install script uses the web redirect for `latest` and only calls the API when needed).
+
 The image provides **`/usr/local/bin/portainer-mcp-enhanced`** as a **runner** that executes **`/data/portainer-mcp/portainer-mcp-enhanced`** when present.
 
 **Register** (Admin → manual stdio): server id e.g. `portainer-mcp`, domain `portainer`, command **`portainer-mcp-enhanced`** with flags, or use **`/data/portainer-mcp/run.sh`** and env vars — see **`docker/portainer-mcp-run.sh.example`**. Get a Portainer API key under **My Account → API Keys**. The proxy container must reach your Portainer URL; use **`-skip-tls-verify`** in the command for self-signed certs (upstream flag).
