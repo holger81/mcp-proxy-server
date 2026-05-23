@@ -23,6 +23,7 @@ from mcp_proxy.live_mcp_tracker import LiveMcpTracker
 from mcp_proxy.mcp_live_tracker_middleware import McpLiveTrackerMiddleware
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
+from mcp_proxy.news_digest_refresher import NewsDigestRefresher
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server
 from mcp_proxy.live_streamable_http_session_manager import (
     LiveBindingStreamableHTTPSessionManager,
@@ -142,8 +143,13 @@ async def lifespan(app: FastAPI):
     # Uvicorn configures logging after importing the app; re-attach so /mcp audit lines reach the ring buffer.
     attach_ring_logging()
     _log_startup_versions()
-    async with app.state.mcp_session_manager.run():
-        yield
+    news_refresher = NewsDigestRefresher.try_start(settings, app.state.server_store)
+    try:
+        async with app.state.mcp_session_manager.run():
+            yield
+    finally:
+        if news_refresher is not None:
+            await news_refresher.stop()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

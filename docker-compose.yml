@@ -22,6 +22,10 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
+      # News digest caches under /data/mcp-news/cache (refreshed by proxy, not the short-lived stdio child).
+      NEWS_MCP_DATA_DIR: /data/mcp-news
+      NEWS_MCP_CACHE_REFRESH_SECONDS: ${NEWS_MCP_CACHE_REFRESH_SECONDS:-600}
+      MCP_PROXY_NEWS_DIGEST_REFRESH_ENABLED: ${MCP_PROXY_NEWS_DIGEST_REFRESH_ENABLED:-true}
       # Default RSS bundle + stdio server `mcp-news` are seeded on first start (see docker/seed_mcp_news.py).
       # Optional: point at your own YAML (must match feeds.yaml shape).
       # MCP_NEWS_DEFAULT_FEEDS: /app/mcp-news-default-feeds.yaml
