@@ -39,6 +39,12 @@ from mcp_proxy.client_policy import (
 )
 from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
+from mcp_proxy.tool_response_cache import ToolResponseCache
+from mcp_proxy.tool_response_pagination import (
+    paginate_call_tool_response,
+    paginate_from_cache,
+    parse_response_pagination,
+)
 from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
     current_mcp_api_client,
@@ -180,6 +186,7 @@ def _llm_limits_excerpt(settings: Settings) -> dict[str, Any]:
         "tool_description_max_chars": settings.tool_description_max_chars,
         "tool_server_llm_context_max_chars": settings.tool_server_llm_context_max_chars,
         "tool_input_schema_max_chars": settings.tool_input_schema_max_chars,
+        "call_tool_response_page_chars": settings.call_tool_response_page_chars,
         "call_tool_response_text_max_chars": settings.call_tool_response_text_max_chars,
         "tool_discovery_compact_json": settings.tool_discovery_compact_json,
         "instructions_max_chars": settings.instructions_max_chars,
@@ -345,28 +352,6 @@ def _rank_match_key(m: dict[str, Any], q_lower: str) -> tuple[int, str]:
     if tn.startswith(q_lower):
         return (1, tn)
     return (2, tn)
-
-
-def _truncate_call_tool_content(
-    blocks: list[mcp_types.ContentBlock], max_chars: int
-) -> list[mcp_types.ContentBlock]:
-    if max_chars <= 0:
-        return blocks
-    out: list[mcp_types.ContentBlock] = []
-    for b in blocks:
-        if isinstance(b, mcp_types.TextContent):
-            t = b.text
-            if isinstance(t, str) and len(t) > max_chars:
-                out.append(
-                    mcp_types.TextContent(
-                        type="text", text=_truncate_text(t, max_chars)
-                    )
-                )
-            else:
-                out.append(b)
-        else:
-            out.append(b)
-    return out
 
 
 def _split_proxy_tool_name(name: str) -> tuple[str, str]:
@@ -718,7 +703,8 @@ def _base_instructions() -> str:
         "(default: safe `serverid__upstream_tool` with only letters, digits, and underscores; hyphens in server "
         "ids become underscores. If the upstream tool name needs other characters, the proxy uses "
         "`serverid__p__` plus hex(UTF-8) instead. Legacy `server/tool` is still accepted by callTool. "
-        "Arguments: JSON object matching that schema.\n\n"
+        "Arguments: JSON object matching that schema. "
+        "Large text responses are split into pages (see responseCacheId / responseOffset on callTool).\n\n"
         "Resources (optional): MCP resources/list exposes `mcp-proxy://meta/current-datetime`; "
         "resources/read on that URI returns the proxy host clock (UTC ISO 8601 and unix time; optional local "
         "wall-clock line when the container sets TZ). Use it when you need the current date/time for scheduling "
@@ -882,7 +868,9 @@ def build_meta_tool_list(
                     if settings.safe_tool_names
                     else "Format: `<server-id>/<upstream-tool-name>`. "
                 )
-                + "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result."
+                + "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result. "
+                "Oversized text replies are paginated: the JSON body includes pagination.responseCacheId; "
+                "pass that with responseOffset for the next slice (upstream is not called again)."
             ),
             inputSchema={
                 "type": "object",
@@ -899,6 +887,25 @@ def build_meta_tool_list(
                         "type": "object",
                         "description": "JSON object of parameters for the upstream tool.",
                         "additionalProperties": True,
+                    },
+                    "responseCacheId": {
+                        "type": "string",
+                        "description": (
+                            "From a previous paginated callTool response. Fetches the next slice without "
+                            "re-invoking the upstream tool."
+                        ),
+                    },
+                    "responseOffset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Character offset into the cached response (default 0).",
+                    },
+                    "responseLimit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Optional page size in characters (capped by the server page limit)."
+                        ),
                     },
                 },
                 "required": ["toolName"],
@@ -970,7 +977,9 @@ def build_proxy_mcp_server(
     stats_store: ToolCallStatsStore,
     *,
     live_tracker: LiveMcpTracker | None = None,
+    tool_response_cache: ToolResponseCache | None = None,
 ) -> Server:
+    response_cache = tool_response_cache or ToolResponseCache()
     server = Server(
         "mcp-proxy",
         version="0.1.0",
@@ -1200,11 +1209,38 @@ def build_proxy_mcp_server(
                 )
             composite_key = tool_name.strip()
             assert_tool_allowed(composite_key, disabled)
+            pagination = parse_response_pagination(args, eff)
+            if pagination.cache_id:
+                entry = response_cache.get(pagination.cache_id)
+                if entry is None:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message=(
+                                "responseCacheId is missing or expired. Re-run callTool without "
+                                "responseCacheId/responseOffset to fetch a fresh response."
+                            ),
+                        )
+                    )
+                return paginate_from_cache(
+                    entry,
+                    settings=eff,
+                    cache_id=pagination.cache_id,
+                    offset=pagination.offset,
+                    limit=pagination.limit,
+                    tool_name=composite_key,
+                )
             sid, orig = _split_proxy_tool_name(composite_key)
             if sid == _ADMIN_SERVER_ID:
                 out = await _call_tool_impl(orig, tool_args)
                 stats_store.record_success(composite_key)
-                return out
+                return paginate_call_tool_response(
+                    out,
+                    settings=eff,
+                    cache=response_cache,
+                    tool_name=composite_key,
+                    pagination=pagination,
+                )
             upstream = store.get(sid)
             if upstream is None or not upstream.enabled:
                 raise McpError(
@@ -1266,9 +1302,12 @@ def build_proxy_mcp_server(
                     )
                 ) from e
             stats_store.record_success(composite_key)
-            return _truncate_call_tool_content(
+            return paginate_call_tool_response(
                 list(result.content or []),
-                eff.call_tool_response_text_max_chars,
+                settings=eff,
+                cache=response_cache,
+                tool_name=composite_key,
+                pagination=pagination,
             )
 
         if name == "listServers":

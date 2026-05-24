@@ -26,6 +26,7 @@ class ClientLlmLimits(BaseModel):
         default=None, ge=0, le=100_000
     )
     tool_input_schema_max_chars: int | None = Field(default=None, ge=0, le=500_000)
+    call_tool_response_page_chars: int | None = Field(default=None, ge=0, le=2_000_000)
     call_tool_response_text_max_chars: int | None = Field(
         default=None, ge=0, le=2_000_000
     )

@@ -29,6 +29,7 @@ from mcp_proxy.live_streamable_http_session_manager import (
     LiveBindingStreamableHTTPSessionManager,
 )
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
+from mcp_proxy.tool_response_cache import ToolResponseCache
 from mcp_proxy.security import AuthEnforcementMiddleware
 from mcp_proxy.settings import Settings
 
@@ -175,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.domain_store = DomainStore(settings.data_dir)
     app.state.domain_store.ensure_default_domain()
     app.state.tool_call_stats_store = ToolCallStatsStore(settings.data_dir)
+    app.state.tool_response_cache = ToolResponseCache()
     app.state.live_mcp_tracker = LiveMcpTracker()
 
     if StreamableHTTPSessionManager is None:
@@ -187,6 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings,
         app.state.tool_call_stats_store,
         live_tracker=app.state.live_mcp_tracker,
+        tool_response_cache=app.state.tool_response_cache,
     )
     app.state.mcp_session_manager = LiveBindingStreamableHTTPSessionManager(
         mcp_sdk_server,

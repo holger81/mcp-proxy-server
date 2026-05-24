@@ -62,7 +62,9 @@ class Settings(BaseSettings):
     tool_server_llm_context_max_chars: int = Field(default=0, ge=0, le=100_000)
     # If inputSchema serializes larger than this (chars), replace with a stub (LLM may need to raise limit).
     tool_input_schema_max_chars: int = Field(default=0, ge=0, le=500_000)
-    # Truncate each text block from upstream callTool (chars).
+    # Paginate upstream callTool text responses when longer than this (chars per page). 0 = off.
+    call_tool_response_page_chars: int = Field(default=5000, ge=0, le=2_000_000)
+    # Legacy hard cap when page_chars is 0; if page_chars > 0 this only applies to sub-page truncation.
     call_tool_response_text_max_chars: int = Field(default=0, ge=0, le=2_000_000)
     # Use compact JSON for searchToolsForDomain / searchTool payloads (fewer tokens).
     tool_discovery_compact_json: Annotated[bool, BeforeValidator(_env_bool)] = False
