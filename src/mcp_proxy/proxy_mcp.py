@@ -43,7 +43,8 @@ from mcp_proxy.tool_response_cache import ToolResponseCache
 from mcp_proxy.tool_response_pagination import (
     paginate_call_tool_response,
     paginate_from_cache,
-    parse_response_pagination,
+    parse_call_tool_pagination,
+    wrap_hot_tool_as_call_tool,
 )
 from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
@@ -869,8 +870,9 @@ def build_meta_tool_list(
                     else "Format: `<server-id>/<upstream-tool-name>`. "
                 )
                 + "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result. "
-                "Oversized text replies are paginated: the JSON body includes pagination.responseCacheId; "
-                "pass that with responseOffset for the next slice (upstream is not called again)."
+                "Oversized text replies are paginated: the JSON body includes pagination.responseCacheId. "
+                "Pass responseCacheId and responseOffset on callTool (top level) or on the composite tool "
+                "call (same fields as upstream args); the proxy strips them before invoking upstream."
             ),
             inputSchema={
                 "type": "object",
@@ -1042,7 +1044,7 @@ def build_proxy_mcp_server(
         hot = frozenset(stats_store.top_keys())
         composite = name if name in hot else None
         if name in hot:
-            args = {"toolName": name, "arguments": args}
+            args = wrap_hot_tool_as_call_tool(name, args)
             name = "callTool"
         display_tool = composite or (
             str(args.get("toolName") or "callTool")
@@ -1068,7 +1070,7 @@ def build_proxy_mcp_server(
         hot = frozenset(stats_store.top_keys())
         if name in hot:
             assert_tool_allowed(name, disabled)
-            args = {"toolName": name, "arguments": args}
+            args = wrap_hot_tool_as_call_tool(name, args)
             name = "callTool"
 
         assert_tool_allowed(name, disabled)
@@ -1199,17 +1201,17 @@ def build_proxy_mcp_server(
                         message="Missing or invalid 'toolName' (string).",
                     )
                 )
-            tool_args = args.get("arguments")
-            if tool_args is not None and not isinstance(tool_args, dict):
+            raw_tool_args = args.get("arguments")
+            if raw_tool_args is not None and not isinstance(raw_tool_args, dict):
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INVALID_PARAMS,
                         message="'arguments' must be a JSON object when provided.",
                     )
                 )
+            tool_args, pagination = parse_call_tool_pagination(args, eff)
             composite_key = tool_name.strip()
             assert_tool_allowed(composite_key, disabled)
-            pagination = parse_response_pagination(args, eff)
             if pagination.cache_id:
                 entry = response_cache.get(pagination.cache_id)
                 if entry is None:

@@ -14,6 +14,11 @@ from mcp_proxy.tool_response_cache import CachedToolResponse, ToolResponseCache
 
 _TRUNC_SUFFIX = " …[truncated]"
 
+# Proxy-only callTool / composite-tool fields (stripped before upstream MCP invoke).
+PAGINATION_ARG_KEYS: frozenset[str] = frozenset(
+    {"responseCacheId", "responseOffset", "responseLimit"}
+)
+
 
 @dataclass(frozen=True)
 class ResponsePaginationRequest:
@@ -74,6 +79,42 @@ def _page_size(settings: Settings) -> int:
     if settings.call_tool_response_page_chars > 0:
         return settings.call_tool_response_page_chars
     return settings.call_tool_response_text_max_chars
+
+
+def peel_pagination_params(
+    raw: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Remove pagination keys from a flat argument object."""
+    rest = dict(raw)
+    pag: dict[str, Any] = {}
+    for key in PAGINATION_ARG_KEYS:
+        if key in rest:
+            pag[key] = rest.pop(key)
+    return rest, pag
+
+
+def wrap_hot_tool_as_call_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Promote pagination fields from composite-tool args to callTool top level."""
+    clean, pag = peel_pagination_params(arguments)
+    out: dict[str, Any] = {"toolName": tool_name, "arguments": clean}
+    out.update(pag)
+    return out
+
+
+def parse_call_tool_pagination(
+    call_tool_args: dict[str, Any], settings: Settings
+) -> tuple[dict[str, Any] | None, ResponsePaginationRequest]:
+    """Read pagination from callTool args; strip it from upstream ``arguments``."""
+    merged_pag: dict[str, Any] = {}
+    tool_args = call_tool_args.get("arguments")
+    clean_upstream: dict[str, Any] | None = None
+    if isinstance(tool_args, dict):
+        clean_upstream, nested = peel_pagination_params(tool_args)
+        merged_pag.update(nested)
+    for key in PAGINATION_ARG_KEYS:
+        if key in call_tool_args:
+            merged_pag[key] = call_tool_args[key]
+    return clean_upstream, parse_response_pagination(merged_pag, settings)
 
 
 def parse_response_pagination(
@@ -160,9 +201,9 @@ def _build_page_payload(
             "toolName": tool_name,
         },
         "hint": (
-            "Large tool response split across pages. For the next slice, call callTool with the same "
-            "toolName, this responseCacheId, and responseOffset set to offset + returnedChars "
-            "(upstream arguments are not re-run)."
+            "Large tool response split across pages. For the next slice, call the same tool again "
+            "(the composite toolName or callTool) with this responseCacheId and responseOffset set "
+            "to offset + returnedChars. Pagination fields are proxy-only and are not sent upstream."
         ),
     }
 
