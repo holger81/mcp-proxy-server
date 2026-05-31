@@ -227,6 +227,36 @@ def _json_discovery(payload: Any, settings: Settings) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
+def _schema_bool(*, description: str, default: bool | None = None) -> dict[str, Any]:
+    """JSON Schema fragment: boolean or common string forms (LLM clients often send \"false\")."""
+    out: dict[str, Any] = {
+        "description": description,
+        "anyOf": [{"type": "boolean"}, {"type": "string"}],
+    }
+    if default is not None:
+        out["default"] = default
+    return out
+
+
+def _schema_int(
+    *,
+    description: str,
+    minimum: int | None = None,
+    default: int | None = None,
+) -> dict[str, Any]:
+    """JSON Schema fragment: integer or decimal string (LLM clients often quote numbers)."""
+    int_part: dict[str, Any] = {"type": "integer"}
+    if minimum is not None:
+        int_part["minimum"] = minimum
+    out: dict[str, Any] = {
+        "description": description,
+        "anyOf": [int_part, {"type": "string"}],
+    }
+    if default is not None:
+        out["default"] = default
+    return out
+
+
 def _coerce_bool_arg(key: str, raw: object) -> bool:
     if raw is None:
         return False
@@ -530,10 +560,9 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Configured server id (slug).",
                     },
-                    "enabled": {
-                        "type": "boolean",
-                        "description": "True to enable, false to disable.",
-                    },
+                    "enabled": _schema_bool(
+                        description="True to enable, false to disable.",
+                    ),
                 },
                 "required": ["serverId", "enabled"],
             },
@@ -581,10 +610,10 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Optional working directory; omit or empty for none.",
                     },
-                    "enabled": {
-                        "type": "boolean",
-                        "description": "Defaults to true.",
-                    },
+                    "enabled": _schema_bool(
+                        description="Defaults to true.",
+                        default=True,
+                    ),
                 },
                 "required": ["serverId", "domain", "command"],
             },
@@ -813,25 +842,22 @@ def build_meta_tool_list(
                             "Required unless listAll is true. Use specific terms to limit context."
                         ),
                     },
-                    "listAll": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": (
+                    "listAll": _schema_bool(
+                        description=(
                             "If true, return all tools in the domain in pages (sorted by toolName). "
                             "Omit or empty `query`. Increase offset to read the full catalog."
                         ),
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 0,
-                        "description": "Pagination: skip this many tools after sort/filter.",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "Pagination: max tools in this response (server caps). Omit for default.",
-                    },
+                        default=False,
+                    ),
+                    "offset": _schema_int(
+                        description="Pagination: skip this many tools after sort/filter.",
+                        minimum=0,
+                        default=0,
+                    ),
+                    "limit": _schema_int(
+                        description="Pagination: max tools in this response (server caps). Omit for default.",
+                        minimum=1,
+                    ),
                 },
                 "required": ["domain"],
             },
@@ -897,18 +923,16 @@ def build_meta_tool_list(
                             "re-invoking the upstream tool."
                         ),
                     },
-                    "responseOffset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "description": "Character offset into the cached response (default 0).",
-                    },
-                    "responseLimit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": (
+                    "responseOffset": _schema_int(
+                        description="Character offset into the cached response (default 0).",
+                        minimum=0,
+                    ),
+                    "responseLimit": _schema_int(
+                        description=(
                             "Optional page size in characters (capped by the server page limit)."
                         ),
-                    },
+                        minimum=1,
+                    ),
                 },
                 "required": ["toolName"],
             },
