@@ -14,6 +14,8 @@ import httpx
 log = logging.getLogger(__name__)
 
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class LlmCuratorConfig:
     model: str
     top_n: int
     input_max: int
+    summary_max_chars: int
     timeout_s: float
     digests: frozenset[str]
 
@@ -41,6 +44,8 @@ class LlmCuratorConfig:
         api_key = os.environ.get("NEWS_MCP_LLM_API_KEY", "").strip() or None
         top_n = _int_env("NEWS_MCP_LLM_TOP_N", 12, lo=3, hi=30)
         input_max = _int_env("NEWS_MCP_LLM_INPUT_MAX", 40, lo=10, hi=80)
+        # Per-headline RSS excerpt sent to the model (after HTML strip). 0 = no cap.
+        summary_max_chars = _int_env("NEWS_MCP_LLM_SUMMARY_MAX_CHARS", 1200, lo=0, hi=8000)
         timeout_s = _float_env("NEWS_MCP_LLM_TIMEOUT_S", 90.0, lo=10.0, hi=300.0)
         digest_raw = os.environ.get("NEWS_MCP_LLM_DIGESTS", "today,germany,local").strip()
         digests = frozenset(
@@ -54,6 +59,7 @@ class LlmCuratorConfig:
             model=model,
             top_n=top_n,
             input_max=input_max,
+            summary_max_chars=summary_max_chars,
             timeout_s=timeout_s,
             digests=digests,
         )
@@ -79,17 +85,35 @@ def _float_env(key: str, default: float, *, lo: float, hi: float) -> float:
         return default
 
 
-def _headline_lines(items: list[dict[str, Any]], limit: int) -> list[str]:
+def _plain_summary(raw: str | None, max_chars: int) -> str:
+    """RSS description with HTML removed; optional cap (0 = send full excerpt)."""
+    if not raw:
+        return ""
+    text = _HTML_TAG_RE.sub(" ", raw)
+    text = _WS_RE.sub(" ", text).strip()
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    # Prefer breaking at a sentence when truncating (token safety valve only).
+    cut = text[:max_chars]
+    for sep in (". ", "! ", "? "):
+        pos = cut.rfind(sep)
+        if pos >= max_chars // 2:
+            return cut[: pos + 1].strip()
+    return cut.rstrip() + "…"
+
+
+def _headline_lines(
+    items: list[dict[str, Any]], limit: int, summary_max_chars: int
+) -> list[str]:
     lines: list[str] = []
     for i, item in enumerate(items[:limit], start=1):
         title = str(item.get("title") or "").strip() or "(no title)"
         source = str(item.get("sourceName") or item.get("sourceType") or "").strip()
-        summary = str(item.get("summary") or "").strip()
-        if len(summary) > 180:
-            summary = summary[:177] + "..."
+        summary = _plain_summary(str(item.get("summary") or ""), summary_max_chars)
         bit = f"{i}. [{source}] {title}" if source else f"{i}. {title}"
         if summary:
-            bit += f" — {summary}"
+            bit += f"\n   {summary}"
         lines.append(bit)
     return lines
 
@@ -163,14 +187,16 @@ async def maybe_curate_digest_payload(
     if not isinstance(items, list) or not items:
         return payload
 
-    lines = _headline_lines(items, cfg.input_max)
+    lines = _headline_lines(items, cfg.input_max, cfg.summary_max_chars)
     if not lines:
         return payload
 
     system = (
-        "You are a senior news editor. From the numbered headline list, pick the stories "
-        f"that matter most to a well-informed general reader. Choose up to {cfg.top_n} distinct "
-        "stories (fewer if the list is thin). Avoid duplicate angles on the same event.\n\n"
+        "You are a senior news editor. From the numbered headline list (title plus RSS excerpt "
+        "per story), pick the stories that matter most to a well-informed general reader and "
+        f"write a thematic briefing. Choose up to {cfg.top_n} distinct stories (fewer if the list "
+        "is thin). Avoid duplicate angles on the same event. The excerpts are from RSS, not full "
+        "articles — synthesize themes from what is provided.\n\n"
         "Respond with JSON only:\n"
         "{\n"
         '  "briefing": "2-4 short paragraphs in markdown summarizing the day\'s most important themes",\n'

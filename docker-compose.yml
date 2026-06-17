@@ -31,6 +31,7 @@ services:
       # NEWS_MCP_LLM_BASE_URL: ${NEWS_MCP_LLM_BASE_URL:-https://api.openai.com/v1}
       # NEWS_MCP_LLM_API_KEY: ${NEWS_MCP_LLM_API_KEY:-}
       # NEWS_MCP_LLM_TOP_N: ${NEWS_MCP_LLM_TOP_N:-12}
+      # NEWS_MCP_LLM_SUMMARY_MAX_CHARS: ${NEWS_MCP_LLM_SUMMARY_MAX_CHARS:-1200}
       # NEWS_MCP_LLM_DIGESTS: ${NEWS_MCP_LLM_DIGESTS:-today,germany,local}
       # Default RSS bundle + stdio server `mcp-news` are seeded on first start (see docker/seed_mcp_news.py).
       # Optional: point at your own YAML (must match feeds.yaml shape).

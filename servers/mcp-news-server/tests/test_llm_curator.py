@@ -39,6 +39,16 @@ def test_apply_selection_reorders_items() -> None:
     assert len(notes) == 2
 
 
+def test_plain_summary_strips_html_and_respects_limit() -> None:
+    from mcp_news_server.llm_curator import _plain_summary
+
+    assert _plain_summary("<p>Hello <b>world</b>.</p>", 0) == "Hello world."
+    long = "A" * 100 + ". " + "B" * 100
+    out = _plain_summary(long, 120)
+    assert len(out) <= 121
+    assert out.endswith(".") or out.endswith("…")
+
+
 def test_maybe_curate_digest_payload_mocked() -> None:
     import asyncio
 
@@ -82,6 +92,7 @@ def test_maybe_curate_digest_payload_mocked() -> None:
         model="test-model",
         top_n=5,
         input_max=40,
+        summary_max_chars=0,
         timeout_s=30.0,
         digests=frozenset({"today"}),
     )
