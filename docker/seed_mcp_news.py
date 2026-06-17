@@ -27,10 +27,11 @@ NEWS_SERVER = {
     "display_name": "News curation (RSS, web, SearXNG)",
     "llm_context": (
         "Fast digests (cached ~10 min): news_today (world/US/regional outside Germany bucket), news_germany "
-        "(DE-focused feeds). Prefer these for routine news questions. news_curate defaults to the same cached "
-        'today digest; use live_fetch true, digest_scope "full", searx_queries, or extra_urls for a fresh fetch. '
-        "Also: news_list_feeds, news_add_rss_feed, news_remove_rss_feed, news_searx_search, news_ingest_urls. "
-        "Feeds persist under NEWS_MCP_DATA_DIR."
+        "(DE-focused feeds), news_local (Bay Area). When NEWS_MCP_LLM_MODEL is set, caches include an LLM "
+        "`briefing` plus a ranked shortlist; use news_briefing for briefing-first JSON. Prefer these for routine "
+        'news questions. news_curate defaults to the same cached today digest; use live_fetch true, digest_scope '
+        '"full", searx_queries, or extra_urls for a fresh fetch. Also: news_list_feeds, news_add_rss_feed, '
+        "news_remove_rss_feed, news_searx_search, news_ingest_urls. Feeds persist under NEWS_MCP_DATA_DIR."
     ),
     "command": ["mcp-news-server"],
     "cwd": None,

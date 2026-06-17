@@ -26,18 +26,21 @@ from mcp_news_server.models import NewsItem
 from mcp_news_server.store import FeedStore, default_data_dir
 
 _INSTRUCTIONS = """\
-Pre-built digests (fast): `news_today` and `news_germany` return cached headlines refreshed automatically \
-every 10 minutes (override with `NEWS_MCP_CACHE_REFRESH_SECONDS`). Prefer these for routine questions.
+Pre-built digests (fast): `news_today`, `news_germany`, and `news_local` return cached headlines refreshed automatically \
+every 10 minutes (override with `NEWS_MCP_CACHE_REFRESH_SECONDS`). When `NEWS_MCP_LLM_MODEL` is set, each refresh \
+also runs an LLM pass that writes a `briefing` summary and a shorter ranked `items` list. Use `news_briefing` for \
+briefing-only output. Prefer these over live fetch unless the user asks for fresh RSS.
 
 `news_curate` defaults to the same cached **today** digest unless you set `live_fetch`: true, \
 `digest_scope`: \"full\", include SearXNG queries/extra URLs, or disabled feeds — then it performs a live fetch.
 
 Other tools: `news_list_feeds`, `news_add_rss_feed`, `news_remove_rss_feed`, `news_searx_search`, \
-`news_ingest_urls`.
+`news_ingest_urls`, `news_briefing`.
 
 Germany vs rest-of-world split uses feed labels (`[Germany]`) and known Germany RSS URLs. \
 Optional env: `SEARXNG_BASE_URL`, `NEWS_MCP_DATA_DIR`, `NEWS_MCP_HTTP_TIMEOUT`, \
-`NEWS_MCP_CACHE_REFRESH_SECONDS`, `NEWS_MCP_CACHE_MAX_TOTAL`, `NEWS_MCP_CACHE_MAX_PER_SOURCE`.
+`NEWS_MCP_CACHE_REFRESH_SECONDS`, `NEWS_MCP_CACHE_MAX_TOTAL`, `NEWS_MCP_CACHE_MAX_PER_SOURCE`, \
+`NEWS_MCP_LLM_MODEL`, `NEWS_MCP_LLM_BASE_URL`, `NEWS_MCP_LLM_API_KEY`, `NEWS_MCP_LLM_TOP_N`, `NEWS_MCP_LLM_DIGESTS`.
 """
 
 
@@ -115,6 +118,10 @@ def _optional_str(args: dict, key: str) -> str | None:
 def _digest_scope(args: dict) -> str:
     raw = args.get("digest_scope")
     if raw is None:
+        scope = args.get("scope")
+        if scope is not None:
+            raw = scope
+    if raw is None:
         return "today"
     if not isinstance(raw, str):
         raise _err("'digest_scope' must be a string.")
@@ -136,6 +143,25 @@ def _wants_live_curate(args: dict) -> bool:
     return False
 
 
+def _briefing_payload(snap: dict[str, Any], scope: str) -> dict[str, Any]:
+    meta = snap.get("meta") if isinstance(snap.get("meta"), dict) else {}
+    items = snap.get("items") if isinstance(snap.get("items"), list) else []
+    out: dict[str, Any] = {
+        "scope": scope,
+        "briefing": snap.get("briefing"),
+        "items": items,
+        "itemCount": len(items),
+        "selection": snap.get("selection"),
+        "meta": meta,
+    }
+    if not snap.get("briefing"):
+        out["note"] = (
+            "No LLM briefing in cache. Set NEWS_MCP_LLM_MODEL (and NEWS_MCP_LLM_API_KEY or a local "
+            "NEWS_MCP_LLM_BASE_URL) on the proxy/news server, then wait for the next digest refresh."
+        )
+    return out
+
+
 def build_tool_list() -> list[mcp_types.Tool]:
     return [
         mcp_types.Tool(
@@ -151,8 +177,8 @@ def build_tool_list() -> list[mcp_types.Tool]:
             name="news_today",
             description=(
                 "Fast path: latest cached digest for non-Germany feeds (world/US/regional outside the Germany "
-                "bucket). Updated automatically every ~10 minutes. Prefer this over live fetch unless the user "
-                "asks for freshly pulled RSS."
+                "bucket). Updated automatically every ~10 minutes. When LLM curation is enabled, includes "
+                "`briefing` (editorial summary) and a shorter ranked `items` list. Prefer this over live fetch."
             ),
             inputSchema={
                 "type": "object",
@@ -197,6 +223,30 @@ def build_tool_list() -> list[mcp_types.Tool]:
                         "type": "boolean",
                         "default": False,
                         "description": "If true, refresh RSS now before responding (slower).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        ),
+        mcp_types.Tool(
+            name="news_briefing",
+            description=(
+                "Cached LLM-curated briefing plus top-ranked headlines for today, Germany, or local. "
+                "Same cache as news_today / news_germany / news_local; returns briefing-focused JSON."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "enum": ["today", "germany", "local"],
+                        "default": "today",
+                        "description": "Which cached digest to read.",
+                    },
+                    "force_refresh": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "If true, refresh RSS (and LLM curation when configured) before responding.",
                     },
                 },
                 "additionalProperties": False,
@@ -478,6 +528,29 @@ def build_news_server() -> Server:
             return [
                 mcp_types.TextContent(
                     type="text", text=safe_json_dumps(digest.snapshot_local())
+                )
+            ]
+
+        if name == "news_briefing":
+            scope = _digest_scope(args)
+            if scope not in ("today", "germany", "local"):
+                raise _err("scope must be today, germany, or local.")
+            if _bool(args, "force_refresh", False):
+                if scope == "germany":
+                    await digest.refresh_germany()
+                elif scope == "local":
+                    await digest.refresh_local()
+                else:
+                    await digest.refresh_today()
+            if scope == "germany":
+                snap = digest.snapshot_germany()
+            elif scope == "local":
+                snap = digest.snapshot_local()
+            else:
+                snap = digest.snapshot_today()
+            return [
+                mcp_types.TextContent(
+                    type="text", text=safe_json_dumps(_briefing_payload(snap, scope))
                 )
             ]
 

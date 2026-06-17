@@ -26,6 +26,12 @@ services:
       NEWS_MCP_DATA_DIR: /data/mcp-news
       NEWS_MCP_CACHE_REFRESH_SECONDS: ${NEWS_MCP_CACHE_REFRESH_SECONDS:-600}
       MCP_PROXY_NEWS_DIGEST_REFRESH_ENABLED: ${MCP_PROXY_NEWS_DIGEST_REFRESH_ENABLED:-true}
+      # Optional LLM curation during digest refresh (OpenAI-compatible API).
+      # NEWS_MCP_LLM_MODEL: ${NEWS_MCP_LLM_MODEL:-}
+      # NEWS_MCP_LLM_BASE_URL: ${NEWS_MCP_LLM_BASE_URL:-https://api.openai.com/v1}
+      # NEWS_MCP_LLM_API_KEY: ${NEWS_MCP_LLM_API_KEY:-}
+      # NEWS_MCP_LLM_TOP_N: ${NEWS_MCP_LLM_TOP_N:-12}
+      # NEWS_MCP_LLM_DIGESTS: ${NEWS_MCP_LLM_DIGESTS:-today,germany,local}
       # Default RSS bundle + stdio server `mcp-news` are seeded on first start (see docker/seed_mcp_news.py).
       # Optional: point at your own YAML (must match feeds.yaml shape).
       # MCP_NEWS_DEFAULT_FEEDS: /app/mcp-news-default-feeds.yaml

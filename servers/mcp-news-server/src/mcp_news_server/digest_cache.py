@@ -12,6 +12,7 @@ from mcp_news_server.dedupe import dedupe_news_items
 from mcp_news_server.feed_regions import feeds_bay_area, feeds_germany, feeds_today_world
 from mcp_news_server.fetchers import gather_rss_for_feeds
 from mcp_news_server.http_util import async_client
+from mcp_news_server.llm_curator import maybe_curate_digest_payload
 from mcp_news_server.models import FeedEntry, NewsItem
 from mcp_news_server.store import FeedStore
 
@@ -226,6 +227,7 @@ class DigestCache:
         pl = _finalize_payload(
             merged, errors, digest, max_total, min_fp, feed_count=len(feeds)
         )
+        pl = await maybe_curate_digest_payload(pl, digest=digest, client=client)
         self._write_disk(
             _path_for_digest(self, digest),
             pl,
