@@ -21,6 +21,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl
 
 from mcp_proxy.config_store import ServerConfigStore
+from mcp_proxy.html_plain_text import html_to_plain_text
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.models import (
     UpstreamServer,
@@ -680,6 +681,7 @@ async def build_tool_catalog_for_admin(
         "searchToolsForDomain": "Search tools within one domain (query + pagination).",
         "searchTool": "Search tools across domains.",
         "callTool": "Execute an upstream tool by composite toolName.",
+        "htmlToPlainText": "Extract readable plain text from an HTML string.",
     }
     catalog: list[dict[str, Any]] = [
         {
@@ -735,6 +737,8 @@ def _base_instructions() -> str:
         "`serverid__p__` plus hex(UTF-8) instead. Legacy `server/tool` is still accepted by callTool. "
         "Arguments: JSON object matching that schema. "
         "Large text responses are split into pages (see responseCacheId / responseOffset on callTool).\n\n"
+        "Built-in utility: `htmlToPlainText` strips HTML to readable plain text (e.g. after fetching "
+        "`body_html` from an email tool when `body_text` is empty).\n\n"
         "Resources (optional): MCP resources/list exposes `mcp-proxy://meta/current-datetime`; "
         "resources/read on that URI returns the proxy host clock (UTC ISO 8601 and unix time; optional local "
         "wall-clock line when the container sets TZ). Use it when you need the current date/time for scheduling "
@@ -935,6 +939,28 @@ def build_meta_tool_list(
                     ),
                 },
                 "required": ["toolName"],
+            },
+        ),
+        mcp_types.Tool(
+            name="htmlToPlainText",
+            description=(
+                "Extract readable plain text from an HTML string. Useful for HTML-only email bodies "
+                "(call with body_html from imap_get_message when body_text is empty) or other HTML snippets."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "html": {
+                        "type": "string",
+                        "description": "HTML source to convert.",
+                    },
+                    "maxChars": _schema_int(
+                        description="Optional maximum length (0 = no limit).",
+                        minimum=0,
+                        default=0,
+                    ),
+                },
+                "required": ["html"],
             },
         ),
     ]
@@ -1213,6 +1239,45 @@ def build_proxy_mcp_server(
                 mcp_types.TextContent(
                     type="text",
                     text=_json_discovery(shaped, eff),
+                )
+            ]
+
+        if name == "htmlToPlainText":
+            html_raw = args.get("html")
+            if not isinstance(html_raw, str):
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="Missing or invalid 'html' (string).",
+                    )
+                )
+            max_raw = args.get("maxChars", 0)
+            try:
+                max_chars = int(max_raw) if max_raw is not None else 0
+            except (TypeError, ValueError):
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'maxChars' must be a non-negative integer.",
+                    )
+                )
+            if max_chars < 0:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'maxChars' must be >= 0.",
+                    )
+                )
+            plain, truncated = html_to_plain_text(html_raw, max_chars=max_chars)
+            payload = {
+                "plainText": plain,
+                "truncated": truncated,
+                "charCount": len(plain),
+            }
+            return [
+                mcp_types.TextContent(
+                    type="text",
+                    text=_json_discovery(payload, eff),
                 )
             ]
 
@@ -1795,8 +1860,8 @@ def build_proxy_mcp_server(
             mcp_types.ErrorData(
                 code=mcp_types.METHOD_NOT_FOUND,
                 message=(
-                    f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool (or a listed popular "
-                    "composite shortcut), or admin tools such as listServers / setServerEnabled / "
+                    f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool, htmlToPlainText "
+                    "(or a listed popular composite shortcut), or admin tools such as listServers / setServerEnabled / "
                     "registerStdioServer / registerManualStdioServer / upgradeStdioServer / removeServer."
                 ),
             )

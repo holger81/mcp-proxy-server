@@ -9,7 +9,7 @@ from mcp_proxy.client_store import ApiClientRecord
 from mcp_proxy.settings import Settings
 
 META_TOOL_NAMES: frozenset[str] = frozenset(
-    {"searchToolsForDomain", "searchTool", "callTool"}
+    {"searchToolsForDomain", "searchTool", "callTool", "htmlToPlainText"}
 )
 
 

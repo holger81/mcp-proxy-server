@@ -164,7 +164,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redirect_slashes=False,
         description=(
             "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
-            "LLM clients get discovery/execution tools (searchToolsForDomain, searchTool, callTool) plus up to "
+            "LLM clients get discovery/execution tools (searchToolsForDomain, searchTool, callTool, "
+            "htmlToPlainText) plus up to "
             "three frequently used composite tool shortcuts. "
             "Server administration tools are exposed as a virtual upstream domain and invoked via callTool."
         ),
