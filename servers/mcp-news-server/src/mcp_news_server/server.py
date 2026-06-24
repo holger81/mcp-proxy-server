@@ -14,7 +14,7 @@ from mcp.shared.exceptions import McpError
 
 from mcp_news_server.dedupe import dedupe_news_items
 from mcp_news_server.digest_cache import DigestCache
-from mcp_news_server.feed_regions import feed_is_germany
+from mcp_news_server.feed_regions import feed_is_bay_area, feed_is_germany
 from mcp_news_server.fetchers import (
     gather_rss_for_feeds,
     fetch_page_metadata,
@@ -31,8 +31,9 @@ every 10 minutes (override with `NEWS_MCP_CACHE_REFRESH_SECONDS`). When `NEWS_MC
 also runs an LLM pass that writes a `briefing` summary and a shorter ranked `items` list. Use `news_briefing` for \
 briefing-only output. Prefer these over live fetch unless the user asks for fresh RSS.
 
-`news_curate` defaults to the same cached **today** digest unless you set `live_fetch`: true, \
-`digest_scope`: \"full\", include SearXNG queries/extra URLs, or disabled feeds — then it performs a live fetch.
+`news_curate` defaults to the same cached **global** digest unless you set `live_fetch`: true, \
+`digest_scope`: \"full\", include SearXNG queries/extra URLs, or disabled feeds — then it performs a live fetch. \
+Use `digest_scope` `global` (default), `local`, or `germany`.
 
 Other tools: `news_list_feeds`, `news_add_rss_feed`, `news_remove_rss_feed`, `news_searx_search`, \
 `news_ingest_urls`, `news_briefing`.
@@ -115,6 +116,21 @@ def _optional_str(args: dict, key: str) -> str | None:
     return s or None
 
 
+_DIGEST_SCOPE_ALIASES = {"today": "global"}
+_VALID_DIGEST_SCOPES = frozenset({"global", "local", "germany", "full"})
+
+
+def _normalize_digest_scope(raw: str) -> str:
+    s = raw.strip().lower()
+    s = _DIGEST_SCOPE_ALIASES.get(s, s)
+    if s not in _VALID_DIGEST_SCOPES:
+        raise _err(
+            "'digest_scope' must be one of: global, local, germany, full "
+            "(today is accepted as an alias for global)."
+        )
+    return s
+
+
 def _digest_scope(args: dict) -> str:
     raw = args.get("digest_scope")
     if raw is None:
@@ -122,13 +138,37 @@ def _digest_scope(args: dict) -> str:
         if scope is not None:
             raw = scope
     if raw is None:
-        return "today"
+        return "global"
     if not isinstance(raw, str):
         raise _err("'digest_scope' must be a string.")
-    s = raw.strip().lower()
-    if s in ("today", "germany", "full"):
-        return s
-    raise _err("'digest_scope' must be one of: today, germany, full.")
+    return _normalize_digest_scope(raw)
+
+
+def _local_searx_queries() -> list[str]:
+    raw = os.environ.get("NEWS_MCP_LOCAL_SEARX_QUERIES", "").strip()
+    if not raw:
+        return []
+    out: list[str] = []
+    for part in raw.split(";"):
+        s = part.strip().strip('"').strip("'").strip()
+        if s:
+            out.append(s)
+    return out[:5]
+
+
+def _local_searx_categories() -> str | None:
+    v = os.environ.get("NEWS_MCP_LOCAL_SEARX_CATEGORIES", "").strip()
+    return v or None
+
+
+def _filter_feeds_for_scope(feeds: list, scope: str) -> list:
+    if scope == "global":
+        return [f for f in feeds if not feed_is_germany(f)]
+    if scope == "germany":
+        return [f for f in feeds if feed_is_germany(f)]
+    if scope == "local":
+        return [f for f in feeds if feed_is_bay_area(f)]
+    return feeds
 
 
 def _wants_live_curate(args: dict) -> bool:
@@ -239,9 +279,9 @@ def build_tool_list() -> list[mcp_types.Tool]:
                 "properties": {
                     "scope": {
                         "type": "string",
-                        "enum": ["today", "germany", "local"],
-                        "default": "today",
-                        "description": "Which cached digest to read.",
+                        "enum": ["global", "local", "germany", "today"],
+                        "default": "global",
+                        "description": "Which cached digest to read (today is an alias for global).",
                     },
                     "force_refresh": {
                         "type": "boolean",
@@ -323,8 +363,9 @@ def build_tool_list() -> list[mcp_types.Tool]:
         mcp_types.Tool(
             name="news_curate",
             description=(
-                "Merge RSS (and optionally SearXNG / extra URLs). By default returns the cached **today** digest "
-                '(same as news_today) without live HTTP. Set live_fetch true and/or digest_scope "full", or add '
+                "Merge RSS (and optionally SearXNG / extra URLs). By default returns the cached **global** digest "
+                '(same as news_today) without live HTTP. Set digest_scope to "local" or "germany" for those buckets. '
+                'Set live_fetch true and/or digest_scope "full", or add '
                 "searx_queries / extra_urls / include_disabled_feeds for a fresh run."
             ),
             inputSchema={
@@ -332,10 +373,11 @@ def build_tool_list() -> list[mcp_types.Tool]:
                 "properties": {
                     "digest_scope": {
                         "type": "string",
-                        "enum": ["today", "germany", "full"],
-                        "default": "today",
+                        "enum": ["global", "local", "germany", "full", "today"],
+                        "default": "global",
                         "description": (
-                            "Which feed subset to use when live-fetching: today (non-DE feeds), germany, or full list."
+                            "Which feed subset to use: global (world/US, default), local (Bay Area), "
+                            "germany, or full (all feeds; live fetch). today is an alias for global."
                         ),
                     },
                     "live_fetch": {
@@ -533,8 +575,8 @@ def build_news_server() -> Server:
 
         if name == "news_briefing":
             scope = _digest_scope(args)
-            if scope not in ("today", "germany", "local"):
-                raise _err("scope must be today, germany, or local.")
+            if scope == "full":
+                raise _err("scope must be global, local, or germany (not full).")
             if _bool(args, "force_refresh", False):
                 if scope == "germany":
                     await digest.refresh_germany()
@@ -559,6 +601,8 @@ def build_news_server() -> Server:
                 scope = _digest_scope(args)
                 if scope == "germany":
                     snap = digest.snapshot_germany()
+                elif scope == "local":
+                    snap = digest.snapshot_local()
                 else:
                     snap = digest.snapshot_today()
                 return [mcp_types.TextContent(type="text", text=safe_json_dumps(snap))]
@@ -580,10 +624,7 @@ def build_news_server() -> Server:
             feeds = store.load()
             if not include_disabled:
                 feeds = [f for f in feeds if f.enabled]
-            if scope == "today":
-                feeds = [f for f in feeds if not feed_is_germany(f)]
-            elif scope == "germany":
-                feeds = [f for f in feeds if feed_is_germany(f)]
+            feeds = _filter_feeds_for_scope(feeds, scope)
 
             merged: list[NewsItem] = []
             errors: list[dict[str, str]] = []
@@ -596,7 +637,14 @@ def build_news_server() -> Server:
                     errors=errors,
                 )
 
-                if searx_queries:
+                searx_to_run = list(searx_queries)
+                searx_cat_eff = searx_cat
+                if scope == "local" and not searx_to_run:
+                    searx_to_run = _local_searx_queries()
+                    if searx_cat_eff is None:
+                        searx_cat_eff = _local_searx_categories()
+
+                if searx_to_run:
                     if not searx_base:
                         errors.append(
                             {
@@ -613,7 +661,7 @@ def build_news_server() -> Server:
                                     searx_base,
                                     sq,
                                     limit=max_per,
-                                    categories=searx_cat,
+                                    categories=searx_cat_eff,
                                 )
                             except Exception as e:
                                 errors.append(
@@ -625,7 +673,7 @@ def build_news_server() -> Server:
                                 return []
 
                         sx_batches = await asyncio.gather(
-                            *(sx_one(sq) for sq in searx_queries)
+                            *(sx_one(sq) for sq in searx_to_run)
                         )
                         for batch in sx_batches:
                             merged.extend(batch)
@@ -672,7 +720,7 @@ def build_news_server() -> Server:
                     "digestScope": scope,
                     "liveFetch": True,
                     "rssFeedsUsed": len(feeds),
-                    "searxQueries": searx_queries,
+                    "searxQueries": searx_to_run,
                     "extraUrls": len(extra_urls),
                     "deduplicated": dedupe,
                     "dedupeUrlsOnly": urls_only,
