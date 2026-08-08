@@ -39,7 +39,7 @@ from mcp_proxy.client_policy import (
     merge_client_settings,
 )
 from mcp_proxy.settings import Settings
-from mcp_proxy.tool_call_stats import ToolCallStatsStore
+from mcp_proxy.tool_call_stats import HOT_TOOL_SLOTS, ToolCallStatsStore
 from mcp_proxy.tool_response_cache import ToolResponseCache
 from mcp_proxy.tool_response_pagination import (
     paginate_call_tool_response,
@@ -443,16 +443,40 @@ def _composite_tool_list_name(composite: str, settings: Settings) -> str:
     return format_composite_tool_name(sid, orig, settings)
 
 
-def _fallback_hot_tool(composite: str, settings: Settings) -> mcp_types.Tool:
-    wire = _composite_tool_list_name(composite, settings)
-    return mcp_types.Tool(
-        name=wire,
-        description=(
-            f"Popular shortcut for `{wire}` (same as callTool with this toolName). "
-            "Use searchToolsForDomain if you need the full input schema."
-        ),
-        inputSchema={"type": "object", "additionalProperties": True},
-    )
+def _match_hot_stats_key(
+    name: str, stats_store: ToolCallStatsStore, settings: Settings
+) -> str | None:
+    """Return the stats key for a hot shortcut name, if it is among the top candidates."""
+    for key in stats_store.top_keys():
+        if key == name or _composite_tool_list_name(key, settings) == name:
+            return key
+    return None
+
+
+async def _as_hot_call_tool_args(
+    name: str,
+    args: dict[str, Any],
+    store: ServerConfigStore,
+    settings: Settings,
+    stats_store: ToolCallStatsStore,
+) -> tuple[str, dict[str, Any], str | None]:
+    """If ``name`` is a verified popular shortcut, rewrite to callTool.
+
+    Returns ``(name, args, display_composite)``. Stale shortcuts are pruned and left unchanged.
+    """
+    hot_key = _match_hot_stats_key(name, stats_store, settings)
+    if hot_key is None:
+        return name, args, None
+    row = await _lookup_tool_row(store, settings, hot_key)
+    if row is None:
+        if stats_store.remove(hot_key):
+            log.info(
+                "Pruned stale popular tool shortcut %r on call (not available upstream)",
+                hot_key,
+            )
+        return name, args, None
+    wire = str(row.get("toolName") or hot_key)
+    return "callTool", wrap_hot_tool_as_call_tool(wire, args), wire
 
 
 def _hot_tool_from_row(row: dict[str, Any]) -> mcp_types.Tool:
@@ -467,6 +491,34 @@ def _hot_tool_from_row(row: dict[str, Any]) -> mcp_types.Tool:
     return mcp_types.Tool(name=composite, description=full_desc, inputSchema=schema)
 
 
+async def _verified_hot_tools(
+    store: ServerConfigStore,
+    settings: Settings,
+    stats_store: ToolCallStatsStore,
+    disabled: frozenset[str],
+    *,
+    slots: int = HOT_TOOL_SLOTS,
+) -> list[mcp_types.Tool]:
+    """Session-level popular shortcuts that still exist upstream (prune stale stats)."""
+    out: list[mcp_types.Tool] = []
+    for composite in stats_store.ranked_keys():
+        if len(out) >= slots:
+            break
+        wire = _composite_tool_list_name(composite, settings)
+        if is_tool_disabled(composite, disabled) or is_tool_disabled(wire, disabled):
+            continue
+        row = await _lookup_tool_row(store, settings, composite)
+        if row is None:
+            if stats_store.remove(composite):
+                log.info(
+                    "Pruned stale popular tool shortcut %r (not available upstream)",
+                    composite,
+                )
+            continue
+        out.append(_hot_tool_from_row(row))
+    return out
+
+
 async def _build_session_tool_list(
     store: ServerConfigStore,
     domain_ids: list[str],
@@ -479,14 +531,7 @@ async def _build_session_tool_list(
     for t in build_meta_tool_list(domain_ids, eff):
         if not is_tool_disabled(t.name, disabled):
             tools.append(t)
-    for composite in stats_store.top_keys():
-        if is_tool_disabled(composite, disabled):
-            continue
-        row = await _lookup_tool_row(store, eff, composite)
-        if row:
-            tools.append(_hot_tool_from_row(row))
-        else:
-            tools.append(_fallback_hot_tool(composite, eff))
+    tools.extend(await _verified_hot_tools(store, eff, stats_store, disabled))
     return tools
 
 
@@ -966,7 +1011,7 @@ def build_meta_tool_list(
     ]
 
 
-def get_llm_preview_snapshot(
+async def get_llm_preview_snapshot(
     store: ServerConfigStore,
     domain_store: DomainStore,
     settings: Settings | None = None,
@@ -978,10 +1023,11 @@ def get_llm_preview_snapshot(
     if not ids:
         ids = {"default"}
     ids.add(_ADMIN_DOMAIN_ID)
-    tools = build_meta_tool_list(ids, cfg)
+    domain_ids = sorted(ids)
     if stats_store is not None:
-        for composite in stats_store.top_keys():
-            tools.append(_fallback_hot_tool(composite, cfg))
+        tools = await _build_session_tool_list(store, domain_ids, cfg, stats_store)
+    else:
+        tools = build_meta_tool_list(domain_ids, cfg)
     tool_dicts = [
         t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools
     ]
@@ -1091,19 +1137,17 @@ def build_proxy_mcp_server(
         name: str, arguments: dict | None
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
-        hot = frozenset(stats_store.top_keys())
-        composite = name if name in hot else None
-        if name in hot:
-            args = wrap_hot_tool_as_call_tool(name, args)
-            name = "callTool"
-        display_tool = composite or (
+        name, args, hot_wire = await _as_hot_call_tool_args(
+            name, args, store, settings, stats_store
+        )
+        display_tool = hot_wire or (
             str(args.get("toolName") or "callTool")
             if name == "callTool"
             else name
         )
         disabled = _disabled_for_request()
-        if name in hot:
-            assert_tool_allowed(name, disabled)
+        if hot_wire is not None:
+            assert_tool_allowed(hot_wire, disabled)
         async with live_tool_span(
             live_tracker,
             tool_name=display_tool,
@@ -1117,11 +1161,11 @@ def build_proxy_mcp_server(
         eff = _effective_settings(settings)
         disabled = _disabled_for_request()
         args = arguments or {}
-        hot = frozenset(stats_store.top_keys())
-        if name in hot:
-            assert_tool_allowed(name, disabled)
-            args = wrap_hot_tool_as_call_tool(name, args)
-            name = "callTool"
+        name, args, hot_wire = await _as_hot_call_tool_args(
+            name, args, store, settings, stats_store
+        )
+        if hot_wire is not None:
+            assert_tool_allowed(hot_wire, disabled)
 
         assert_tool_allowed(name, disabled)
 
@@ -1334,6 +1378,12 @@ def build_proxy_mcp_server(
                 )
             upstream = store.get(sid)
             if upstream is None or not upstream.enabled:
+                if stats_store.remove(composite_key):
+                    log.info(
+                        "Pruned popular tool shortcut %r (unknown or disabled server %r)",
+                        composite_key,
+                        sid,
+                    )
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INVALID_PARAMS,

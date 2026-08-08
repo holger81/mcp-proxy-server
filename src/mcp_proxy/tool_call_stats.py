@@ -6,7 +6,7 @@ import json
 import threading
 from pathlib import Path
 
-_HOT_TOOL_SLOTS = 3
+HOT_TOOL_SLOTS = 3
 
 
 class ToolCallStatsStore:
@@ -63,7 +63,23 @@ class ToolCallStatsStore:
             self._counts[key] = self._counts.get(key, 0) + 1
             self._persist_unlocked()
 
-    def top_keys(self, n: int = _HOT_TOOL_SLOTS) -> list[str]:
+    def remove(self, composite_tool_name: str) -> bool:
+        """Drop a composite key from stats (e.g. tool removed upstream)."""
+        key = composite_tool_name.strip()
+        if not key:
+            return False
+        with self._lock:
+            if key not in self._counts:
+                return False
+            del self._counts[key]
+            self._persist_unlocked()
+            return True
+
+    def ranked_keys(self) -> list[str]:
+        """All composite keys ordered by call count (desc), then name."""
         with self._lock:
             items = sorted(self._counts.items(), key=lambda kv: (-kv[1], kv[0]))
-            return [k for k, _ in items[: max(0, n)]]
+            return [k for k, _ in items]
+
+    def top_keys(self, n: int = HOT_TOOL_SLOTS) -> list[str]:
+        return self.ranked_keys()[: max(0, n)]
