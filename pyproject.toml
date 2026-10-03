@@ -18,6 +18,13 @@ dependencies = [
   "httpx>=0.28.1,<0.29",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "respx>=0.21",
+]
+
 [project.scripts]
 mcp-proxy = "mcp_proxy.__main__:main"
 
@@ -26,3 +33,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mcp_proxy = ["py.typed", "catalog/*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]
