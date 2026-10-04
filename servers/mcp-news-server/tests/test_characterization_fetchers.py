@@ -183,7 +183,9 @@ def test_searx_search_parses_and_limits():
     assert [i.url for i in items] == ["https://story.test/a", "https://story.test/b"]
     a = items[0]
     assert a.summary == "Excerpt A"
-    assert a.published == "2025-09-01T08:00:00"
+    # PR 1.3 intentionally changed this: SearXNG dates normalize to ISO-UTC
+    # (was the raw string "2025-09-01T08:00:00").
+    assert a.published == "2025-09-01T08:00:00+00:00"
     assert a.source_type == "searx"
     assert a.extra == {"engines": ["google", "bing"]}
     assert items[1].summary is None
@@ -201,6 +203,32 @@ def test_searx_search_tolerates_missing_results_key():
                 return await searx_search(client, "https://sx.test", "kw", limit=5)
 
     assert run(go()) == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2025-09-01T08:00:00Z", "2025-09-01T08:00:00+00:00"),
+        ("2025-09-01T08:00:00", "2025-09-01T08:00:00+00:00"),
+        ("2025-09-01T10:30:00+02:30", "2025-09-01T08:00:00+00:00"),
+        ("Mon, 01 Sep 2025 08:00:00 GMT", "2025-09-01T08:00:00+00:00"),
+        ("not a date", None),
+    ],
+)
+def test_searx_search_normalizes_published_dates(raw, expected):
+    import respx
+
+    payload = {"results": [{"url": "https://story.test/x", "title": "X", "publishedDate": raw}]}
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            with respx.mock:
+                respx.get("https://sx.test/search").mock(
+                    return_value=httpx.Response(200, json=payload)
+                )
+                return await searx_search(client, "https://sx.test", "kw", limit=5)
+
+    assert run(go())[0].published == expected
 
 
 def test_fetch_page_metadata_prefers_op_graph():
