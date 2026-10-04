@@ -77,6 +77,21 @@ def _iso_from_rfc822(s: str | None) -> str | None:
         return None
 
 
+def _iso_from_flexible(s: str | None) -> str | None:
+    """Normalize engine-provided dates (ISO8601 or RFC822) to ISO-UTC; None if junk."""
+    raw = (s or "").strip()
+    if not raw:
+        return None
+    candidate = raw[:-1] + "+00:00" if raw.endswith(("Z", "z")) else raw
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError:
+        return _iso_from_rfc822(raw)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 async def fetch_rss_via_http(
     client: httpx.AsyncClient,
     feed_url: str,
@@ -211,7 +226,7 @@ async def searx_search(
         content = row.get("content")
         summary = str(content).strip() if content else None
         pub = row.get("publishedDate") or row.get("pubdate")
-        published = str(pub).strip() if pub else None
+        published = _iso_from_flexible(str(pub)) if pub else None
         engine = row.get("engine")
         extra = {}
         if isinstance(engine, str):
