@@ -306,15 +306,18 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#8](https://github.com/holger81/mcp-proxy-server/pulls).
+
 | PR | Branch (base) | State |
 |---|---|---|
-| 0.1 test CI (Actions on 3.12, dev extras, pytest ini) | `ci/test-suite` (main) | ✅ committed; 10+10 baseline green |
-| 0.2 smoke harness (`scripts/smoke_test.py` + fixture + `smoke.yml`) | `test/smoke-harness` (main) | ✅ committed; 9 checks green (2 runs) |
-| 0.3 news-server characterization (27 tests) | `test/news-characterization` (0.1) | ✅ committed; 37 green |
-| 1.1 curator on open client (+2 regression tests) | `fix/news-curator-closed-client` (0.1) | ✅ committed; tests fail on old code ✓ |
-| 1.2 newest-first sort polarity (dedupe + curate) | `fix/news-sort-polarity` (0.1) | ✅ committed; 4 tests fail on old code ✓ |
-| 1.3 SearXNG dates → ISO-UTC (+5 format tests) | `fix/searx-date-normalization` (0.3) | ✅ committed; 42 green |
-| 1.4 nits: `removed` flag, `_int` bool-reject, docstrings, absolute `static_root` | `fix/nits-bundle` (0.1) | ✅ committed; smoke re-verified ✓ |
+| 0.1 test CI (Actions on 3.12, dev extras, pytest ini) | `ci/test-suite` (main) [#1] | ✅ CI green on GitHub |
+| 0.2 smoke harness (`scripts/smoke_test.py` + fixture + `smoke.yml`) | `test/smoke-harness` (main) [#3] | ✅ smoke green on GitHub |
+| 0.3 news-server characterization (27 tests) | `test/news-characterization` (0.1) [#4] | ✅ tests green |
+| 1.1 curator on open client (+2 regression tests) | `fix/news-curator-closed-client` (0.1) [#5] | ✅ tests green; fail on old code ✓ |
+| 1.2 newest-first sort polarity (dedupe + curate) | `fix/news-sort-polarity` (0.1) [#6] | ✅ tests green; fail on old code ✓ |
+| 1.3 SearXNG dates → ISO-UTC (+5 format tests) | `fix/searx-date-normalization` (0.3) [#8] | ✅ tests green |
+| 1.4 nits: `removed` flag, `_int` bool-reject, docstrings, absolute `static_root` | `fix/nits-bundle` (0.1) [#7] | ✅ tests + smoke green |
+| docs PLAN.md | `docs/audit-plan` (main) [#2] | open |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
