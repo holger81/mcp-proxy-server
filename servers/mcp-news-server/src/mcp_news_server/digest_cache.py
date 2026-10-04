@@ -224,10 +224,13 @@ class DigestCache:
                     for b in batches:
                         merged.extend(b)
 
-        pl = _finalize_payload(
-            merged, errors, digest, max_total, min_fp, feed_count=len(feeds)
-        )
-        pl = await maybe_curate_digest_payload(pl, digest=digest, client=client)
+            pl = _finalize_payload(
+                merged, errors, digest, max_total, min_fp, feed_count=len(feeds)
+            )
+            # Must run while the shared client is still open; calling this after
+            # the `async with` used to hit a closed client (curator never worked).
+            pl = await maybe_curate_digest_payload(pl, digest=digest, client=client)
+
         self._write_disk(
             _path_for_digest(self, digest),
             pl,
