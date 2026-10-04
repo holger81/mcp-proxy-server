@@ -19,6 +19,15 @@ def _env_bool(v: object) -> bool:
     return bool(s)
 
 
+def _default_static_root() -> Path:
+    # In a repo checkout, resolve against the repo root instead of the current
+    # working directory so the admin UI mounts regardless of launch dir.
+    # Installed (wheel) layouts keep the old cwd-relative default; Docker sets
+    # MCP_PROXY_STATIC_ROOT=/app/static explicitly.
+    candidate = Path(__file__).resolve().parents[2] / "static"
+    return candidate if candidate.is_dir() else Path("static")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MCP_PROXY_",
@@ -37,7 +46,7 @@ class Settings(BaseSettings):
     )
     allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = True
     allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = True
-    static_root: Path = Path("static")
+    static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""
     # If set, read admin password from this file (strip whitespace). Docker/Portainer secrets.
