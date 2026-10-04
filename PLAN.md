@@ -306,11 +306,19 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-| PR | Branch | State |
+| PR | Branch (base) | State |
 |---|---|---|
-| 0.1 test CI (Actions on 3.12, dev extras, pytest ini) | `ci/test-suite` | ✅ committed; 10+10 baseline green |
-| 0.2 smoke harness (`scripts/smoke_test.py` + fixture + `smoke.yml`) | `test/smoke-harness` | ✅ committed; 9 checks green (2 runs) |
-| 0.3 news-server characterization (27 tests) | `test/news-characterization` (stacked on 0.1) | ✅ committed; 37 green |
+| 0.1 test CI (Actions on 3.12, dev extras, pytest ini) | `ci/test-suite` (main) | ✅ committed; 10+10 baseline green |
+| 0.2 smoke harness (`scripts/smoke_test.py` + fixture + `smoke.yml`) | `test/smoke-harness` (main) | ✅ committed; 9 checks green (2 runs) |
+| 0.3 news-server characterization (27 tests) | `test/news-characterization` (0.1) | ✅ committed; 37 green |
+| 1.1 curator on open client (+2 regression tests) | `fix/news-curator-closed-client` (0.1) | ✅ committed; tests fail on old code ✓ |
+| 1.2 newest-first sort polarity (dedupe + curate) | `fix/news-sort-polarity` (0.1) | ✅ committed; 4 tests fail on old code ✓ |
+| 1.3 SearXNG dates → ISO-UTC (+5 format tests) | `fix/searx-date-normalization` (0.3) | ✅ committed; 42 green |
+| 1.4 nits: `removed` flag, `_int` bool-reject, docstrings, absolute `static_root` | `fix/nits-bundle` (0.1) | ✅ committed; smoke re-verified ✓ |
+
+**Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
+from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
+Phase 2 is next (storage & fetch robustness).
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -319,4 +327,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
 - `migrate_feeds` appends 3 supplemental Bay Area feeds on **every** store load — digest tests must account for them (respx catch-all).
 
-Next: Phase 1 (news-server correctness fixes), starting with PR 1.1 sort polarity.
+Next: Phase 2 (news-server storage & fetch robustness).
