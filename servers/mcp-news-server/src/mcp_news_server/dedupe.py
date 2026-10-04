@@ -58,9 +58,13 @@ def title_fingerprint(title: str) -> str:
 
 
 def _published_sort_key(it: NewsItem) -> tuple[int, str]:
-    """Tuple for sorting: dated items first, then by ISO date string (use reverse=True for newest-first)."""
+    """Tuple for sorting with reverse=True: dated newest-first, undated last.
+
+    The dated flag must be 1 for dated items so that, under reverse=True,
+    every dated item outranks every undated one (0).
+    """
     p = (it.published or "").strip()
-    return (0, p) if p else (1, "")
+    return (1, p) if p else (0, "")
 
 
 def _prefer_item(a: NewsItem, b: NewsItem) -> bool:
