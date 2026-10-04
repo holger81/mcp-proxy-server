@@ -1,0 +1,27 @@
+# End-to-end smoke test: boots the real proxy and drives the full MCP path.
+# Standalone (does not depend on the pytest workflow) so it can gate merges
+# on its own. See scripts/smoke_test.py.
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            servers/mcp-news-server/pyproject.toml
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . -e ./servers/mcp-news-server
+      - name: Run smoke test
+        run: python scripts/smoke_test.py
