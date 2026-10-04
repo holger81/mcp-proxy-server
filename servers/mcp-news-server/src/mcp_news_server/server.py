@@ -12,7 +12,7 @@ from mcp import types as mcp_types
 from mcp.server import Server
 from mcp.shared.exceptions import McpError
 
-from mcp_news_server.dedupe import dedupe_news_items
+from mcp_news_server.dedupe import _published_sort_key, dedupe_news_items
 from mcp_news_server.digest_cache import DigestCache
 from mcp_news_server.feed_regions import feed_is_bay_area, feed_is_germany
 from mcp_news_server.fetchers import (
@@ -702,14 +702,7 @@ def build_news_server() -> Server:
                     min_title_fingerprint_len=min_fp,
                 )
             else:
-                merged.sort(
-                    key=lambda it: (
-                        (0, (it.published or "").strip())
-                        if (it.published or "").strip()
-                        else (1, "")
-                    ),
-                    reverse=True,
-                )
+                merged.sort(key=_published_sort_key, reverse=True)
 
             merged = merged[:max_total]
             payload = {
