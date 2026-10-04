@@ -303,3 +303,20 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 - **D4 (resolved): warn-first across the board.** PRs 4.6, 4.7, 5.2 each ship as two
   PRs: (a) warning + env override with old default, (b) one release later, flip.
   Follow-ups tracked as 4.6b / 4.7b / 5.2b.
+
+## Progress log
+
+| PR | Branch | State |
+|---|---|---|
+| 0.1 test CI (Actions on 3.12, dev extras, pytest ini) | `ci/test-suite` | ✅ committed; 10+10 baseline green |
+| 0.2 smoke harness (`scripts/smoke_test.py` + fixture + `smoke.yml`) | `test/smoke-harness` | ✅ committed; 9 checks green (2 runs) |
+| 0.3 news-server characterization (27 tests) | `test/news-characterization` (stacked on 0.1) | ✅ committed; 37 green |
+
+Notes for later PRs (learned while writing the harness/tests):
+- respx matches routes in **registration order** — register specific routes before catch-alls.
+- Tool names sanitize server-id hyphens → underscores (`smoke-echo` → `smoke_echo__echo`); legacy `server/tool` spelling still resolves.
+- mcp 1.27 low-level `CallToolRequest` handler receives the request directly and converts raised `McpError` into an `isError=True` `CallToolResult` — assert on `isError`, not exceptions.
+- `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
+- `migrate_feeds` appends 3 supplemental Bay Area feeds on **every** store load — digest tests must account for them (respx catch-all).
+
+Next: Phase 1 (news-server correctness fixes), starting with PR 1.1 sort polarity.
