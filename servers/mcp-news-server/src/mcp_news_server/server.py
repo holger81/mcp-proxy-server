@@ -68,8 +68,12 @@ def _int(
 ) -> int:
     if key not in args or args[key] is None:
         return default
+    value = args[key]
+    if isinstance(value, bool):
+        # bool is a subclass of int; True/False are never valid integers here.
+        raise _err(f"{key!r} must be an integer, not a boolean.")
     try:
-        n = int(args[key])
+        n = int(value)
     except (TypeError, ValueError):
         raise _err(f"{key!r} must be an integer.") from None
     if n < min_v or n > max_v:
@@ -309,7 +313,10 @@ def build_tool_list() -> list[mcp_types.Tool]:
         ),
         mcp_types.Tool(
             name="news_remove_rss_feed",
-            description="Remove a feed by URL (matches normalized URL).",
+            description=(
+                "Remove a feed by URL (matches normalized URL). Response includes "
+                "`removed: true/false`."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {"url": {"type": "string"}},
@@ -366,7 +373,9 @@ def build_tool_list() -> list[mcp_types.Tool]:
                 "Merge RSS (and optionally SearXNG / extra URLs). By default returns the cached **global** digest "
                 '(same as news_today) without live HTTP. Set digest_scope to "local" or "germany" for those buckets. '
                 'Set live_fetch true and/or digest_scope "full", or add '
-                "searx_queries / extra_urls / include_disabled_feeds for a fresh run."
+                "searx_queries / extra_urls / include_disabled_feeds for a fresh run. "
+                "Note: max_per_source, max_total and dedupe options only apply to live runs; "
+                "the cached path returns the stored digest as-is."
             ),
             inputSchema={
                 "type": "object",
@@ -499,8 +508,12 @@ def build_news_server() -> Server:
             url = args.get("url")
             if not isinstance(url, str) or not url.strip():
                 raise _err("Missing or invalid 'url'.")
+            before = len(store.load())
             feeds = store.remove(url.strip())
-            return _json_text({"ok": True, "feeds": [f.to_json_dict() for f in feeds]})
+            removed = len(feeds) < before
+            return _json_text(
+                {"ok": True, "removed": removed, "feeds": [f.to_json_dict() for f in feeds]}
+            )
 
         if name == "news_searx_search":
             q = args.get("query")
