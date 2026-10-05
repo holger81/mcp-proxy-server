@@ -20,6 +20,9 @@ def _env_bool(v: object) -> bool:
     return bool(s)
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+
 def _default_static_root() -> Path:
     # In a repo checkout, resolve against the repo root instead of the current
     # working directory so the admin UI mounts regardless of launch dir.
@@ -47,6 +50,9 @@ class Settings(BaseSettings):
     )
     allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = True
     allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = True
+    # PLAN 4.7b: next release will refuse to start when no admin password is
+    # set AND the bind host is non-loopback, unless this flag is true.
+    allow_no_auth: Annotated[bool, BeforeValidator(_env_bool)] = False
     static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""
@@ -186,3 +192,34 @@ class Settings(BaseSettings):
                     env_name,
                     env_name,
                 )
+
+    def log_bind_policy(self) -> None:
+        """PLAN 4.7a (D4 warn-first): loud warning for open unauthenticated bind.
+
+        Behavior unchanged this release. Next release refuses to start in
+        this state unless ``MCP_PROXY_ALLOW_NO_AUTH=true`` (4.7b).
+        """
+        log = logging.getLogger("mcp_proxy.settings")
+        if self.auth_enabled or self.host in _LOOPBACK_HOSTS:
+            return
+        if self.allow_no_auth:
+            log.info(
+                "No admin password and bind host %s, but MCP_PROXY_ALLOW_NO_AUTH=true; "
+                "from the next release this flag keeps the proxy starting without auth.",
+                self.host,
+            )
+            return
+        bar = "!" * 78
+        log.warning(
+            "\n%s\n"
+            "  INSECURE BIND: no admin password is set and the proxy listens on %s.\n"
+            "  Anyone who can reach this address can use and administer all proxied\n"
+            "  MCP servers.\n"
+            "  Next release, startup will be REFUSED in this state unless you set\n"
+            "  MCP_PROXY_ADMIN_PASSWORD, or MCP_PROXY_ALLOW_NO_AUTH=true (deliberate\n"
+            "  open deployment), or bind to a loopback host (127.0.0.1).\n"
+            "%s",
+            bar,
+            self.host,
+            bar,
+        )
