@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#16](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#17](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -326,6 +326,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 3.2 Curator prompt hardening (fences + sanitize) (+3 tests) | `fix/curator-prompt-hardening` (main) [#14] | ✅ CI green; merged `8adc8e3` |
 | 3.3 Error classes in tool responses; details to logs (+6 tests) | `fix/error-surfaces` (main) [#15] | ✅ CI green; merged `b1cfcc2` |
 | 4.1 Canonical disabled-tool keys (`tool_names.py`) (+7 tests) | `fix/disabled-tool-normalization` (main) [#16] | ✅ CI green; merged `bb6fb5e` |
+| 4.2 API scopes: `require_admin_api` + `can_admin` (D3) (+6 tests) | `feat/admin-api-scopes` (main) [#17] | ✅ CI green; merged `e77edb8` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -339,5 +340,7 @@ Notes for later PRs (learned while writing the harness/tests):
 - `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
 - httpx ≥ 0.28 has **no** `on_redirect` event hook (unknown hook keys are silently dropped) — redirect interception lives in `limited_get`'s manual hop loop now.
 - Python ≥ 3.14 `ipaddress.is_private` excludes CGNAT `100.64.0.0/10` — check ranges explicitly in `url_guard`.
+- Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
+- `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 4.2 (split API scopes: `require_admin_api` + per-client `can_admin`).
+Next: PR 4.3 (fail closed on bearer-resolution errors in the `/mcp` auth middleware).
