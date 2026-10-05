@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#21](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#22](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -331,6 +331,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 4.4 Login rate limiting (`LoginRateLimiter`, 429) (+8 tests) | `feat/login-rate-limit` (main) [#19] | ✅ CI green; merged `f1330b1` |
 | 4.5 Reserved `mcp-tools-admin` slugs (+5 tests) | `feat/reserve-admin-slug` (main) [#20] | ✅ CI green; merged `31de690` |
 | 4.6a Install-default flip warning (docs + startup warn) (+2 tests) | `feat/install-warn-default` (main) [#21] | ✅ CI green; merged `2c3db3d` |
+| 4.7a Loud warn: no auth + open bind (+4 tests) | `feat/no-auth-warning` (main) [#22] | ✅ CI green; merged `0df4891` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -347,4 +348,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 4.7a (loud startup warning: no auth + non-loopback bind; `MCP_PROXY_ALLOW_NO_AUTH` documented for 4.7b flip).
+Next: PR 5.1 (shield stdio timeout cleanup; no orphaned children). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (isError propagation flip) — warnings for all three are live now.
