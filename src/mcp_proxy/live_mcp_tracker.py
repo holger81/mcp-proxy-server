@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -67,7 +68,14 @@ class LiveMcpTracker:
     """In-memory tracker for MCP sessions and running tool calls.
 
     This is best-effort diagnostic state. It resets on process restart.
+    Memory is bounded via eviction in :meth:`snapshot` (the admin poll is the
+    tracker's only periodic hook).
     """
+
+    # Call entries younger than this keep their (idle) session alive in the
+    # map; older ones can only be leaked bookkeeping (crash between
+    # begin/end) and get dropped.
+    _STALE_CALL_MS = 30 * 60_000
 
     def __init__(self) -> None:
         self._lock = anyio.Lock()
@@ -111,7 +119,9 @@ class LiveMcpTracker:
         self, *, session_id: str, tool_name: str, arguments: dict[str, Any] | None
     ) -> str:
         now = _now_ms()
-        key = f"{tool_name}:{now}"
+        # uuid suffix: two concurrent calls of the same tool in the same
+        # millisecond must not share (and overwrite) one active_calls entry.
+        key = f"{tool_name}:{now}:{uuid.uuid4().hex[:8]}"
         preview: str | None = None
         if arguments:
             try:
@@ -164,10 +174,28 @@ class LiveMcpTracker:
             return best_id
 
     async def snapshot(self, *, active_within_ms: int = 90_000) -> dict[str, Any]:
-        """Return a JSON-serializable snapshot for the admin UI."""
+        """Return a JSON-serializable snapshot for the admin UI.
+
+        Also evicts sessions idle beyond ``active_within_ms`` (unless they
+        still hold a young active call) and call entries leaked by a crash
+        between begin/end — without this, one entry per session id ever seen
+        accumulated forever (PLAN 5.3).
+        """
         now = _now_ms()
         cutoff = now - max(1, int(active_within_ms))
         async with self._lock:
+            for sid in list(self._clients):
+                c = self._clients[sid]
+                if c.last_seen_at_ms >= cutoff:
+                    continue
+                if c.active_calls:
+                    c.active_calls = {
+                        k: call
+                        for k, call in c.active_calls.items()
+                        if now - call.started_at_ms < self._STALE_CALL_MS
+                    }
+                if not c.active_calls:
+                    del self._clients[sid]
             out: list[dict[str, Any]] = []
             for c in self._clients.values():
                 if c.last_seen_at_ms < cutoff:
@@ -237,4 +265,8 @@ async def live_tool_span(
     try:
         yield
     finally:
-        await tracker.end_tool_call(session_id=session_id, call_id=call_id)
+        # Runs on client-disconnect/timeout cancellation too: without the
+        # shield, end_tool_call's lock acquire re-raises Cancelled and the
+        # active-call entry leaks (PLAN 5.3).
+        with anyio.CancelScope(shield=True):
+            await tracker.end_tool_call(session_id=session_id, call_id=call_id)
