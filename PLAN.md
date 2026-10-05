@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#8](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#9](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -317,7 +317,8 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 1.2 newest-first sort polarity (dedupe + curate) | `fix/news-sort-polarity` (0.1) [#6] | ✅ tests green; fail on old code ✓ |
 | 1.3 SearXNG dates → ISO-UTC (+5 format tests) | `fix/searx-date-normalization` (0.3) [#8] | ✅ tests green |
 | 1.4 nits: `removed` flag, `_int` bool-reject, docstrings, absolute `static_root` | `fix/nits-bundle` (0.1) [#7] | ✅ tests + smoke green |
-| docs PLAN.md | `docs/audit-plan` (main) [#2] | open |
+| docs PLAN.md | `docs/audit-plan` (main) [#2] | ✅ merged; ledger kept updated on main |
+| 2.1 atomic locked `feeds.yaml` writes + corrupt-YAML quarantine (+4 tests) | `fix/feed-store-atomic-writes` (main) [#9] | ✅ CI green; merged `6f2e70c` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -330,4 +331,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
 - `migrate_feeds` appends 3 supplemental Bay Area feeds on **every** store load — digest tests must account for them (respx catch-all).
 
-Next: Phase 2 (news-server storage & fetch robustness).
+Next: PR 2.2 (one-shot feed migrations; D1 resolved: user-enabled `DISABLE_URLS` feeds stay enabled).
