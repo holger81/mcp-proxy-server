@@ -35,6 +35,9 @@ class FeedStore:
     def __init__(self, data_dir: Path | None = None) -> None:
         self.data_dir = data_dir or default_data_dir()
         self._path = self.data_dir / "feeds.yaml"
+        # Migration IDs already recorded on disk (refreshed by load());
+        # persisted again by save() so each one-shot migration runs only once.
+        self._applied: list[str] = []
 
     def _ensure(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -58,8 +61,16 @@ class FeedStore:
                 label = str(row.get("label", "") or "").strip()
                 enabled = bool(row.get("enabled", True))
                 out.append(FeedEntry(url=url, label=label, enabled=enabled))
-            migrated, changed = migrate_feeds(out)
-            if changed:
+            disk_applied = [
+                x
+                for x in raw.get("migrations_applied") or []
+                if isinstance(x, str)
+            ]
+            migrated, recorded, changed = migrate_feeds(out, disk_applied)
+            self._applied = disk_applied + [
+                rid for rid in recorded if rid not in disk_applied
+            ]
+            if changed or recorded:
                 self.save(migrated)
             return migrated
 
@@ -110,7 +121,8 @@ class FeedStore:
                 "feeds": [
                     {"url": f.url, "label": f.label, "enabled": f.enabled}
                     for f in feeds
-                ]
+                ],
+                "migrations_applied": list(self._applied),
             }
             # Write-then-replace so a crash mid-write can never leave a
             # truncated feeds.yaml behind.
