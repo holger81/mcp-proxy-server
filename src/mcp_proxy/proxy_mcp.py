@@ -664,8 +664,15 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
 
 async def _collect_all_tool_defs(
     store: ServerConfigStore, settings: Settings, domain_id: str | None
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """All tool rows for a domain plus *degraded* upstreams that failed.
+
+    PR 5.6: a failed upstream used to vanish silently from discovery results;
+    callers now surface ``[{"serverId": …, "error": …}]`` so an LLM knows the
+    tool list may be incomplete instead of hallucinating "tool does not exist".
+    """
     combined: list[dict[str, Any]] = []
+    degraded: list[dict[str, str]] = []
     if domain_id in (None, _ADMIN_DOMAIN_ID):
         combined.extend(_admin_tool_rows(settings))
     for s in store.list_servers():
@@ -678,12 +685,11 @@ async def _collect_all_tool_defs(
             combined.extend(_tool_defs_for_server(s, tools, settings))
         except TimeoutError:
             log.warning("collect tools: timeout for upstream %s", s.id)
+            degraded.append({"serverId": s.id, "error": "timeout"})
         except Exception as e:
-            log.exception(
-                "collect tools: skip upstream %s (%s)",
-                s.id,
-                upstream_error_detail(e),
-            )
+            detail = upstream_error_detail(e)
+            log.exception("collect tools: skip upstream %s (%s)", s.id, detail)
+            degraded.append({"serverId": s.id, "error": detail[:200]})
     disabled = _disabled_for_request()
     if disabled:
         combined = [
@@ -691,7 +697,7 @@ async def _collect_all_tool_defs(
             for d in combined
             if not is_tool_disabled(str(d.get("toolName", "")), disabled)
         ]
-    return combined
+    return combined, degraded
 
 
 async def build_tool_catalog_for_admin(
@@ -715,7 +721,7 @@ async def build_tool_catalog_for_admin(
         }
         for meta in sorted(META_TOOL_NAMES)
     ]
-    defs = await _collect_all_tool_defs(store, settings, None)
+    defs, _degraded = await _collect_all_tool_defs(store, settings, None)
     for row in defs:
         sid = str(row.get("serverId", ""))
         catalog.append(
@@ -1205,7 +1211,7 @@ def build_proxy_mcp_server(
                     )
                 )
             offset, page_limit = _parse_domain_pagination(args, eff)
-            defs = await _collect_all_tool_defs(store, settings, dom)
+            defs, degraded = await _collect_all_tool_defs(store, settings, dom)
             if list_all:
                 ordered = sorted(defs, key=lambda r: str(r.get("toolName", "")).lower())
                 total = len(ordered)
@@ -1224,6 +1230,9 @@ def build_proxy_mcp_server(
                 "mode": mode,
                 "domain": dom,
                 "tools": shaped,
+                # PR 5.6: servers whose tool list failed to load this round —
+                # their tools are missing from the result, don't treat as absent.
+                "degradedServers": degraded,
                 "pagination": {
                     "offset": offset,
                     "limit": page_limit,
@@ -1267,19 +1276,43 @@ def build_proxy_mcp_server(
                         )
                     )
 
-            all_defs = await _collect_all_tool_defs(store, settings, dom_filter)
+            all_defs, degraded = await _collect_all_tool_defs(store, settings, dom_filter)
             matches = [d for d in all_defs if _tool_row_matches_query(d, q)]
             matches.sort(key=lambda m: _rank_match_key(m, q))
+            total = len(matches)
             search_max = eff.tool_search_max_matches
-            if search_max > 0:
+            truncated = search_max > 0 and total > search_max
+            if truncated:
                 matches = matches[:search_max]
             shaped = [_shape_tool_row_for_llm(m, eff) for m in matches]
-            return [
+            out: list[mcp_types.ContentBlock] = [
                 mcp_types.TextContent(
                     type="text",
                     text=_json_discovery(shaped, eff),
                 )
             ]
+            # PR 5.6: keep the healthy payload byte-identical (single array
+            # block), but when information is missing say so — an extra block
+            # with {truncated, total, degradedServers}. Concatenating clients
+            # only see it in the rare degraded/overflow case.
+            if degraded or truncated:
+                out.append(
+                    mcp_types.TextContent(
+                        type="text",
+                        text=_json_discovery(
+                            {
+                                "discoveryMeta": {
+                                    "truncated": truncated,
+                                    "total": total,
+                                    "maxMatches": search_max,
+                                    "degradedServers": degraded,
+                                }
+                            },
+                            eff,
+                        ),
+                    )
+                )
+            return out
 
         if name == "htmlToPlainText":
             html_raw = args.get("html")
