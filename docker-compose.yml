@@ -22,6 +22,10 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
+      # Package installs from the admin UI / proxy tools. Currently default to enabled;
+      # the default becomes disabled in the next release — set explicitly to pin behavior.
+      # MCP_PROXY_ALLOW_PYPI_INSTALL: "true"
+      # MCP_PROXY_ALLOW_NPM_INSTALL: "true"
       # News digest caches under /data/mcp-news/cache (refreshed by proxy, not the short-lived stdio child).
       NEWS_MCP_DATA_DIR: /data/mcp-news
       NEWS_MCP_CACHE_REFRESH_SECONDS: ${NEWS_MCP_CACHE_REFRESH_SECONDS:-600}

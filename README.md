@@ -357,8 +357,8 @@ Then:
 | MCP_PROXY_HOST | 0.0.0.0 | Bind address |
 | MCP_PROXY_PORT | 8080 | Port |
 | MCP_PROXY_DATA_DIR | /data | Storage |
-| MCP_PROXY_ALLOW_PYPI_INSTALL | true | Allow PyPI installs |
-| MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs |
+| MCP_PROXY_ALLOW_PYPI_INSTALL | true | Allow PyPI installs (**default will change to `false` in the next release** — set it explicitly) |
+| MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs (**default will change to `false` in the next release** — set it explicitly) |
 | MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
 | MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
