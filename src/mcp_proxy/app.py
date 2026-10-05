@@ -160,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _check_mcp_streamable_http_compat()
     settings.log_auth_state()
     settings.log_install_policy()
+    settings.log_error_policy()
     settings.log_bind_policy()
     app = FastAPI(
         title="MCP Proxy",

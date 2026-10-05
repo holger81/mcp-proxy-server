@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # PLAN 4.7b: next release will refuse to start when no admin password is
     # set AND the bind host is non-loopback, unless this flag is true.
     allow_no_auth: Annotated[bool, BeforeValidator(_env_bool)] = False
+    # PLAN 5.2a: when true, upstream callTool results keep their isError flag
+    # and structuredContent. Default false (today's behavior) this release;
+    # 5.2b flips the default.
+    propagate_tool_errors: Annotated[bool, BeforeValidator(_env_bool)] = False
     static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""
@@ -192,6 +196,24 @@ class Settings(BaseSettings):
                     env_name,
                     env_name,
                 )
+
+    def log_error_policy(self) -> None:
+        """PLAN 5.2a (D4 warn-first): announce upstream error propagation.
+
+        Behavior unchanged this release — upstream tool errors still arrive
+        as successful text. 5.2b flips the default to propagate.
+        """
+        log = logging.getLogger("mcp_proxy.settings")
+        if "MCP_PROXY_PROPAGATE_TOOL_ERRORS" in os.environ:
+            return
+        log.warning(
+            "MCP_PROXY_PROPAGATE_TOOL_ERRORS is not set: upstream tool errors "
+            "(isError) currently reach clients as normal text, but from the "
+            "next release they will propagate as errors by default (and "
+            "structuredContent will be forwarded). Set "
+            "MCP_PROXY_PROPAGATE_TOOL_ERRORS=false to keep hiding errors, or "
+            "=true to opt in early."
+        )
 
     def log_bind_policy(self) -> None:
         """PLAN 4.7a (D4 warn-first): loud warning for open unauthenticated bind.
