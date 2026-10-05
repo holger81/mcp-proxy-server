@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -106,63 +105,13 @@ def _proxy_datetime_resource_body() -> str:
     return "\n".join(lines) + "\n"
 
 
-# Composite MCP tool names for upstream tools: legacy `server/tool`, or safe encoding for strict
-# clients (e.g. Cursor) using only [a-zA-Z0-9_]:
-# - Descriptive: `serverid__upstream_tool` (hyphens in server id → underscores)
-# - Fallback when the upstream name is not safely representable: `serverid__p__<hex utf-8 tool>`
-_PROXY_TOOL_SEP = "__p__"
-_SAFE_TOOL_TAIL = re.compile(r"^[A-Za-z0-9_]+$")
-
-
-def _hex_utf8_suffix_ok(s: str) -> bool:
-    if len(s) % 2 != 0:
-        return False
-    if not s:
-        return True
-    if not all(ch in "0123456789abcdefABCDEF" for ch in s):
-        return False
-    try:
-        bytes.fromhex(s).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
-        return False
-    return True
-
-
-def encode_proxy_tool_name(server_id: str, tool_name: str) -> str:
-    sid = server_id.replace("-", "_")
-    if _SAFE_TOOL_TAIL.fullmatch(tool_name) and _PROXY_TOOL_SEP not in tool_name:
-        return f"{sid}__{tool_name}"
-    hx = tool_name.encode("utf-8").hex()
-    return f"{sid}{_PROXY_TOOL_SEP}{hx}"
-
-
-def decode_proxy_tool_name(composite: str) -> tuple[str, str]:
-    c = composite.strip()
-    if "/" in c:
-        sid, tool = c.split("/", 1)
-        sid, tool = sid.strip(), tool.strip()
-        if not sid or not tool:
-            raise ValueError("empty segment")
-        return sid, tool
-    i = 0
-    while True:
-        j = c.find(_PROXY_TOOL_SEP, i)
-        if j == -1:
-            break
-        left = c[:j]
-        right = c[j + len(_PROXY_TOOL_SEP) :]
-        if left and _hex_utf8_suffix_ok(right):
-            try:
-                tool = bytes.fromhex(right).decode("utf-8") if right else ""
-            except (ValueError, UnicodeDecodeError) as e:
-                raise ValueError(str(e)) from e
-            return left.replace("_", "-"), tool
-        i = j + 1
-    if "__" in c:
-        left, right = c.split("__", 1)
-        if left and right:
-            return left.replace("_", "-"), right
-    raise ValueError("not a composite tool name")
+# Composite tool-name helpers live in mcp_proxy.tool_names so policy code can
+# import them without a cycle (proxy_mcp already imports client_policy).
+from mcp_proxy.tool_names import (  # noqa: F401  (re-exported)
+    PROXY_TOOL_SEP as _PROXY_TOOL_SEP,
+    decode_proxy_tool_name,
+    encode_proxy_tool_name,
+)
 
 
 def format_composite_tool_name(
