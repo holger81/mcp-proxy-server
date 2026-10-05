@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#24](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#25](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -334,6 +334,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 4.7a Loud warn: no auth + open bind (+4 tests) | `feat/no-auth-warning` (main) [#22] | ✅ CI green; merged `0df4891` |
 | 5.1 Shielded stdio timeout cleanup; tree kill (+1 test) | `fix/shield-stdio-cleanup` (main) [#23] | ✅ CI green; merged `5d950f1` |
 | 5.2a `isError`/`structuredContent` behind flag (+6 tests) | `feat/propagate-tool-errors` (main) [#24] | ✅ CI green; merged `a7945e1` |
+| 5.3 Tracker eviction + uuid ids + shielded end (+4 tests) | `fix/tracker-evict` (main) [#25] | ✅ CI green; merged `e0043fe` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -350,4 +351,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 5.3 (LiveMcpTracker: prune on snapshot + uuid call ids + shield `end_tool_call`). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 5.4 (stats: tri-state lookup, prune only on not-found; write-behind + LRU cap in `ToolCallStatsStore`). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
