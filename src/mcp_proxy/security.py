@@ -83,6 +83,43 @@ def require_api_access(request: Request) -> None:
     )
 
 
+def require_admin_api(request: Request) -> None:
+    """Admin session, or a bearer client explicitly granted ``can_admin`` (PLAN 4.2, D3).
+
+    Plain bearer tokens keep full access to the MCP endpoint and to
+    ``require_api_access`` routes; server/catalog management needs the
+    per-client toggle.
+    """
+    settings: Settings = request.app.state.settings
+    if not settings.auth_enabled:
+        return
+    if is_admin_session(request):
+        return
+    token = bearer_token(request)
+    if token:
+        store: ClientTokenStore = request.app.state.client_store
+        client = store.resolve_bearer(token)
+        if client is not None:
+            if client.can_admin:
+                return
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This API client token is read-only for server management. "
+                    "Ask an administrator to enable 'Admin API access' "
+                    "(can_admin) for this client in the admin UI."
+                ),
+            )
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "Admin session or admin-capable bearer token required. Sign in to "
+            "the admin UI or send Authorization: Bearer <token> for a client "
+            "with 'Admin API access' enabled."
+        ),
+    )
+
+
 def require_docs_access(request: Request) -> bool:
     """True if request may access /docs or OpenAPI JSON (admin session only)."""
     settings: Settings = request.app.state.settings

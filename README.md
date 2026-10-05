@@ -343,6 +343,11 @@ Then:
 - `/mcp` requires:
   - session cookie OR
   - `Authorization: Bearer <token>`
+- Server/catalog management APIs (`/api/servers/*`, `/api/catalog/*`) additionally require an
+  **admin session** or a bearer token whose client has **Admin API access** (`can_admin`) enabled
+  under **Admin → Clients**. New clients have it **off** by default; a token without it gets `403`
+  with a hint pointing at the toggle. Everything else (the MCP endpoint, per-client tool policy)
+  is unchanged for bearer tokens.
 
 ---
 ## ⚙️ Environment Variables

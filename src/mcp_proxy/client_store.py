@@ -51,6 +51,9 @@ class ApiClientRecord(BaseModel):
     token_sha256_hex: str = Field(min_length=64, max_length=64)
     llm_limits: ClientLlmLimits = Field(default_factory=ClientLlmLimits)
     disabled_tools: list[str] = Field(default_factory=list)
+    # PLAN 4.2 (D3): bearer tokens may call the admin-side API (servers,
+    # catalog) only when explicitly granted; default off for every client.
+    can_admin: bool = False
     instructions: str = Field(
         default="",
         max_length=12000,
@@ -105,6 +108,7 @@ class ClientTokenStore:
             row.setdefault("llm_limits", {})
             row.setdefault("disabled_tools", [])
             row.setdefault("instructions", "")
+            row.setdefault("can_admin", False)
         return ApiClientListFile.model_validate(raw)
 
     def _write_unlocked(self, doc: ApiClientListFile) -> None:
@@ -127,6 +131,7 @@ class ClientTokenStore:
                 "has_llm_overrides": c.llm_limits.has_any_override(),
                 "disabled_tools_count": len(c.disabled_tools),
                 "has_instructions": bool((c.instructions or "").strip()),
+                "can_admin": c.can_admin,
             }
             for c in doc.clients
         ]
@@ -171,6 +176,7 @@ class ClientTokenStore:
         llm_limits: ClientLlmLimits | None = None,
         disabled_tools: list[str] | None = None,
         instructions: str | None = None,
+        can_admin: bool | None = None,
     ) -> ApiClientRecord | None:
         cid = validate_slug_id(client_id)
         with self._lock:
@@ -189,6 +195,8 @@ class ClientTokenStore:
                     c.disabled_tools = disabled_tools
                 if instructions is not None:
                     c.instructions = instructions.strip()[:12000]
+                if can_admin is not None:
+                    c.can_admin = bool(can_admin)
                 doc.clients[i] = c
                 self._write_unlocked(doc)
                 return c.model_copy(deep=True)
@@ -235,4 +243,5 @@ class ClientTokenStore:
             "llm_limits": record.llm_limits.model_dump(mode="json"),
             "disabled_tools": list(record.disabled_tools),
             "instructions": record.instructions,
+            "can_admin": record.can_admin,
         }

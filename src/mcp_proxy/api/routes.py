@@ -8,7 +8,7 @@ from mcp_proxy.api.mail_mcp import router as mail_mcp_router
 from mcp_proxy.api.portainer_mcp import router as portainer_mcp_router
 from mcp_proxy.api.observability import router as observability_router
 from mcp_proxy.api.servers import router as servers_router
-from mcp_proxy.security import require_admin_session, require_api_access
+from mcp_proxy.security import require_admin_api, require_admin_session
 
 router = APIRouter(tags=["api"])
 
@@ -20,10 +20,12 @@ async def health() -> dict[str, str]:
 
 router.include_router(auth_router)
 
-_secured = APIRouter(dependencies=[Depends(require_api_access)])
-_secured.include_router(catalog_router)
-_secured.include_router(servers_router)
-router.include_router(_secured)
+# Server/catalog management: admin session or bearer client with can_admin
+# (PLAN 4.2). Plain tokens keep working on /mcp and read-only endpoints.
+_admin_api = APIRouter(dependencies=[Depends(require_admin_api)])
+_admin_api.include_router(catalog_router)
+_admin_api.include_router(servers_router)
+router.include_router(_admin_api)
 
 _admin = APIRouter(dependencies=[Depends(require_admin_session)])
 _admin.include_router(clients_router)
