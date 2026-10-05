@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#19](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#21](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -329,6 +329,8 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 4.2 API scopes: `require_admin_api` + `can_admin` (D3) (+6 tests) | `feat/admin-api-scopes` (main) [#17] | ✅ CI green; merged `e77edb8` |
 | 4.3 Fail closed on bearer-resolution errors (+6 tests) | `fix/bearer-fail-closed` (main) [#18] | ✅ CI green; merged `6ef1237` |
 | 4.4 Login rate limiting (`LoginRateLimiter`, 429) (+8 tests) | `feat/login-rate-limit` (main) [#19] | ✅ CI green; merged `f1330b1` |
+| 4.5 Reserved `mcp-tools-admin` slugs (+5 tests) | `feat/reserve-admin-slug` (main) [#20] | ✅ CI green; merged `31de690` |
+| 4.6a Install-default flip warning (docs + startup warn) (+2 tests) | `feat/install-warn-default` (main) [#21] | ✅ CI green; merged `2c3db3d` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -345,4 +347,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 4.5 (reserve the `mcp-tools-admin` server id slug).
+Next: PR 4.7a (loud startup warning: no auth + non-loopback bind; `MCP_PROXY_ALLOW_NO_AUTH` documented for 4.7b flip).
