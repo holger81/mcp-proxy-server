@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#13](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#14](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -323,6 +323,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 2.3 refresh-failure keeps last good digest (+3 tests) | `fix/digest-refresh-guard` (main) [#11] | ✅ CI green; merged `237de9e` |
 | 2.4 `limited_get` 5 MB body cap in all fetchers (+6 tests) | `feat/limited-get` (main) [#12] | ✅ CI green; merged `179a50c` |
 | 3.1 SSRF guard `url_guard.py` + per-hop redirect checks (+24 tests) | `feat/ssrf-guard` (main) [#13] | ✅ CI green; merged `3065179` |
+| 3.2 Curator prompt hardening (fences + sanitize) (+3 tests) | `fix/curator-prompt-hardening` (main) [#14] | ✅ CI green; merged `8adc8e3` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -337,4 +338,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - httpx ≥ 0.28 has **no** `on_redirect` event hook (unknown hook keys are silently dropped) — redirect interception lives in `limited_get`'s manual hop loop now.
 - Python ≥ 3.14 `ipaddress.is_private` excludes CGNAT `100.64.0.0/10` — check ranges explicitly in `url_guard`.
 
-Next: PR 3.2 (curator prompt hardening: untrusted-content fences + control-char stripping).
+Next: PR 3.3 (generic error surfaces in tool responses; details to server logs).
