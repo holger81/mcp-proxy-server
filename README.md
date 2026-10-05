@@ -349,6 +349,10 @@ Then:
   with a hint pointing at the toggle. Everything else (the MCP endpoint, per-client tool policy)
   is unchanged for bearer tokens.
 
+> ⚠️ **Upcoming:** if no admin password is set **and** the proxy binds a non-loopback address,
+> the next release will **refuse to start** unless you set `MCP_PROXY_ALLOW_NO_AUTH=true`
+> (deliberate open deployment). Today this only logs a loud startup warning.
+
 ---
 ## ⚙️ Environment Variables
 
@@ -361,6 +365,7 @@ Then:
 | MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs (**default will change to `false` in the next release** — set it explicitly) |
 | MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
 | MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
+| MCP_PROXY_ALLOW_NO_AUTH | false | Next release: must be `true` to start without a password on a non-loopback bind (warn-only today) |
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
 | MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients), e.g. `email__list_emails`. Names that need other characters fall back to a hex suffix after `__p__`. Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
 
