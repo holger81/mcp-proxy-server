@@ -240,22 +240,28 @@ async def _stdio_client_piped_stderr_capture(
         try:
             yield read_stream, write_stream
         finally:
-            if process.stdin:  # pragma: no branch
+            # This finally routinely runs inside an ALREADY-cancelled scope
+            # (upstream_timeout_s via anyio.fail_after). Without a shield the
+            # first await re-raises Cancelled, the child (start_new_session=True,
+            # so not in our process group) is never terminated, and it leaks
+            # forever (PLAN 5.1).
+            with anyio.CancelScope(shield=True):
+                if process.stdin:  # pragma: no branch
+                    try:
+                        await process.stdin.aclose()
+                    except BaseException:  # noqa: BLE001 - cleanup must continue
+                        pass
                 try:
-                    await process.stdin.aclose()
-                except Exception:  # pragma: no cover
+                    with anyio.fail_after(PROCESS_TERMINATION_TIMEOUT):
+                        await process.wait()
+                except TimeoutError:
+                    await terminate_posix_process_tree(process)
+                except ProcessLookupError:  # pragma: no cover
                     pass
-            try:
-                with anyio.fail_after(PROCESS_TERMINATION_TIMEOUT):
-                    await process.wait()
-            except TimeoutError:
-                await terminate_posix_process_tree(process)
-            except ProcessLookupError:  # pragma: no cover
-                pass
-            await read_stream.aclose()
-            await write_stream.aclose()
-            await read_stream_writer.aclose()
-            await write_stream_reader.aclose()
+                await read_stream.aclose()
+                await write_stream.aclose()
+                await read_stream_writer.aclose()
+                await write_stream_reader.aclose()
 
 
 @asynccontextmanager
