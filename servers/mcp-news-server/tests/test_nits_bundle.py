@@ -15,6 +15,9 @@ from mcp_news_server.server import _int, build_news_server, build_tool_list
 @pytest.fixture
 def call(tmp_path, monkeypatch):
     monkeypatch.setenv("NEWS_MCP_DATA_DIR", str(tmp_path))
+    # gone.test never resolves; allow-list it (SSRF guard escape hatch) so
+    # this test pins the removed-flag contract, not DNS.
+    monkeypatch.setenv("NEWS_MCP_ALLOW_URLS", "gone.test")
     server = build_news_server()
     handler = server.request_handlers[mt.CallToolRequest]
 

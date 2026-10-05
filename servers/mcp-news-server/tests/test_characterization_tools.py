@@ -29,6 +29,7 @@ _CLEAN_ENV = (
     "NEWS_MCP_CACHE_REFRESH_SECONDS",
     "NEWS_MCP_CACHE_MAX_PER_SOURCE",
     "NEWS_MCP_CACHE_MAX_TOTAL",
+    "NEWS_MCP_ALLOW_URLS",
 )
 
 WIRE_RSS = """<?xml version="1.0"?><rss version="2.0"><channel><title>Wire</title>
@@ -42,6 +43,9 @@ def call(tmp_path, monkeypatch):
     monkeypatch.setenv("NEWS_MCP_DATA_DIR", str(tmp_path))
     for key in _CLEAN_ENV:
         monkeypatch.delenv(key, raising=False)
+    # .test hosts never resolve; allow-list them (the guard's own escape
+    # hatch) so the pinned add/remove contracts stay DNS-independent.
+    monkeypatch.setenv("NEWS_MCP_ALLOW_URLS", "a.test,e.test")
     server = build_news_server()
     handler = server.request_handlers[mt.CallToolRequest]
 

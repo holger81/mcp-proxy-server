@@ -24,6 +24,7 @@ from mcp_news_server.fetchers import (
 from mcp_news_server.http_util import async_client
 from mcp_news_server.models import NewsItem
 from mcp_news_server.store import FeedStore, default_data_dir
+from mcp_news_server.url_guard import UrlBlockedError, assert_safe_public_url
 
 _INSTRUCTIONS = """\
 Pre-built digests (fast): `news_today`, `news_germany`, and `news_local` return cached headlines refreshed automatically \
@@ -498,6 +499,10 @@ def build_news_server() -> Server:
             url = args.get("url")
             if not isinstance(url, str) or not url.strip():
                 raise _err("Missing or invalid 'url'.")
+            try:
+                assert_safe_public_url(url.strip())
+            except UrlBlockedError as e:
+                raise _err(f"URL rejected by SSRF guard: {e}") from None
             label = args.get("label")
             lab = str(label).strip() if isinstance(label, str) else ""
             store.add(url.strip(), lab)
@@ -521,7 +526,14 @@ def build_news_server() -> Server:
                 raise _err("Missing or invalid 'query'.")
             limit = _int(args, "limit", 15, min_v=1, max_v=50)
             categories = _optional_str(args, "categories")
-            base = _optional_str(args, "searx_base_url") or _searx_base_from_env()
+            # D2: the tool *parameter* is guarded; the operator env var is trusted.
+            base_param = _optional_str(args, "searx_base_url")
+            if base_param:
+                try:
+                    assert_safe_public_url(base_param)
+                except UrlBlockedError as e:
+                    raise _err(f"searx_base_url rejected by SSRF guard: {e}") from None
+            base = base_param or _searx_base_from_env()
             if not base:
                 raise _err(
                     "Set `searx_base_url` or environment variable `SEARXNG_BASE_URL`."
@@ -546,6 +558,11 @@ def build_news_server() -> Server:
             async with async_client() as client:
 
                 async def one(u: str) -> NewsItem | None:
+                    try:
+                        assert_safe_public_url(u)
+                    except UrlBlockedError as e:
+                        errors.append({"url": u, "error": f"blocked: {e}"})
+                        return None
                     try:
                         return await fetch_page_metadata(client, u)
                     except Exception as e:
@@ -630,7 +647,14 @@ def build_news_server() -> Server:
             dedupe = _bool(args, "deduplicate", True)
             urls_only = _bool(args, "dedupe_urls_only", False)
             min_fp = _int(args, "min_title_fingerprint_len", 24, min_v=8, max_v=200)
-            searx_base = _optional_str(args, "searx_base_url") or _searx_base_from_env()
+            # D2: the tool *parameter* is guarded; the operator env var is trusted.
+            searx_base_param = _optional_str(args, "searx_base_url")
+            if searx_base_param:
+                try:
+                    assert_safe_public_url(searx_base_param)
+                except UrlBlockedError as e:
+                    raise _err(f"searx_base_url rejected by SSRF guard: {e}") from None
+            searx_base = searx_base_param or _searx_base_from_env()
             searx_cat = _optional_str(args, "searx_categories")
             scope = _digest_scope(args)
 
@@ -694,6 +718,13 @@ def build_news_server() -> Server:
                 if extra_urls:
 
                     async def web_one(u: str) -> NewsItem | None:
+                        try:
+                            assert_safe_public_url(u)
+                        except UrlBlockedError as e:
+                            errors.append(
+                                {"source": u, "error": f"blocked: {e}"}
+                            )
+                            return None
                         try:
                             return await fetch_page_metadata(client, u)
                         except Exception as e:

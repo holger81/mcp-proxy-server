@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urljoin
 
 import httpx
+
+from mcp_news_server.url_guard import assert_safe_public_url
 
 _DEFAULT_UA = (
     "Mozilla/5.0 (compatible; mcp-news-server/0.1; +https://github.com/modelcontextprotocol)"
@@ -33,6 +36,7 @@ def async_client() -> httpx.AsyncClient:
 
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # real feeds are well under this
+MAX_REDIRECTS = 20  # same default as httpx
 
 
 class ResponseTooLargeError(httpx.HTTPError):
@@ -46,39 +50,61 @@ async def limited_get(
     params: dict[str, str] | None = None,
     max_bytes: int = MAX_RESPONSE_BYTES,
 ) -> httpx.Response:
-    """GET with a hard cap on the body downloaded into memory.
+    """GET with a hard body cap and SSRF-guarded redirects.
 
     Mirrors ``client.get(url, follow_redirects=True)`` followed by
-    ``raise_for_status()``, but aborts before buffering an unbounded body:
-    immediately when ``Content-Length`` exceeds ``max_bytes``, or mid-stream
-    when the accumulated bytes do (missing or lying header).
+    ``raise_for_status()``, but:
+
+    - aborts before buffering an unbounded body — up-front on a too-large
+      ``Content-Length``, mid-stream on accumulated bytes (missing/lying header);
+    - follows redirects manually (httpx 0.28 has no redirect event hook) so
+      every hop is re-validated by :func:`assert_safe_public_url`; a public
+      URL may not redirect us into an internal one.
     """
-    async with client.stream(
-        "GET", url, params=params, follow_redirects=True
-    ) as response:
-        declared = response.headers.get("content-length", "")
-        if declared.isdecimal() and int(declared) > max_bytes:
-            raise ResponseTooLargeError(
-                f"response for {url} declares {declared} bytes "
-                f"(limit {max_bytes})"
-            )
-        body = bytearray()
-        async for chunk in response.aiter_bytes():
-            body.extend(chunk)
-            if len(body) > max_bytes:
-                raise ResponseTooLargeError(
-                    f"response for {url} exceeded {max_bytes} bytes "
-                    "while streaming"
+    current_url = url
+    current_params = params
+    for hop in range(MAX_REDIRECTS + 1):
+        async with client.stream(
+            "GET", current_url, params=current_params, follow_redirects=False
+        ) as response:
+            if response.has_redirect_location and hop < MAX_REDIRECTS:
+                next_url = urljoin(
+                    str(response.request.url), response.headers["location"]
                 )
-        content = bytes(body)
-        request = response.request
+                assert_safe_public_url(next_url)
+                current_url, current_params = next_url, None
+                continue
+            if response.has_redirect_location:
+                raise httpx.TooManyRedirects(
+                    f"exceeded {MAX_REDIRECTS} redirects",
+                    request=response.request,
+                )
+            declared = response.headers.get("content-length", "")
+            if declared.isdecimal() and int(declared) > max_bytes:
+                raise ResponseTooLargeError(
+                    f"response for {current_url} declares {declared} bytes "
+                    f"(limit {max_bytes})"
+                )
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > max_bytes:
+                    raise ResponseTooLargeError(
+                        f"response for {current_url} exceeded {max_bytes} "
+                        "bytes while streaming"
+                    )
+            content = bytes(body)
+            request = response.request
+            status = response.status_code
+            headers = response.headers
+            extensions = response.extensions
 
     full = httpx.Response(
-        status_code=response.status_code,
-        headers=response.headers,
+        status_code=status,
+        headers=headers,
         content=content,
         request=request,
-        extensions=response.extensions,
+        extensions=extensions,
     )
     full.raise_for_status()
     return full
