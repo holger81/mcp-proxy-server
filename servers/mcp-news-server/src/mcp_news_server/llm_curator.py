@@ -191,6 +191,21 @@ def _apply_selection(
     return curated, notes
 
 
+def _brief_llm_error(e: Exception) -> str:
+    """Error class for meta.llmError; full details stay in the log (PLAN 3.3)."""
+    if isinstance(e, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"http_{e.response.status_code}"
+    if isinstance(e, httpx.HTTPError):
+        return "llm_http_error"
+    if isinstance(e, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(e, ValueError):
+        return "invalid_llm_response"
+    return "internal_error"
+
+
 async def maybe_curate_digest_payload(
     payload: dict[str, Any],
     *,
@@ -267,10 +282,10 @@ async def maybe_curate_digest_payload(
             raise ValueError("LLM JSON missing briefing")
         curated, selection = _apply_selection(items, parsed, cfg.top_n)
     except Exception as e:
-        log.warning("LLM digest curation failed for %s: %s", digest, e)
+        log.warning("LLM digest curation failed for %s: %r", digest, e)
         meta = dict(payload.get("meta") or {})
         meta["llmCurated"] = False
-        meta["llmError"] = str(e) or type(e).__name__
+        meta["llmError"] = _brief_llm_error(e)
         out = dict(payload)
         out["meta"] = meta
         return out

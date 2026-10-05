@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from urllib.parse import urljoin
 
 import httpx
 
-from mcp_news_server.url_guard import assert_safe_public_url
+from mcp_news_server.url_guard import UrlBlockedError, assert_safe_public_url
 
 _DEFAULT_UA = (
     "Mozilla/5.0 (compatible; mcp-news-server/0.1; +https://github.com/modelcontextprotocol)"
@@ -108,3 +109,32 @@ async def limited_get(
     )
     full.raise_for_status()
     return full
+
+
+def classify_error(e: BaseException) -> str:
+    """Short, stable error class for in-band tool responses (PLAN 3.3).
+
+    Raw exception strings often embed internal URLs, ports or stack hints;
+    tool responses only get the class, full details go to server logs.
+    """
+    if isinstance(e, ResponseTooLargeError):
+        return "response_too_large"
+    if isinstance(e, UrlBlockedError):
+        return "url_blocked"
+    if isinstance(e, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(e, httpx.TooManyRedirects):
+        return "too_many_redirects"
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"http_{e.response.status_code}"
+    if isinstance(e, httpx.DecodingError):
+        return "decoding_error"
+    if isinstance(e, httpx.InvalidURL):
+        return "invalid_url"
+    if isinstance(e, httpx.ConnectError):
+        return "connect_failed"
+    if isinstance(e, httpx.HTTPError):
+        return "http_error"
+    if isinstance(e, json.JSONDecodeError):
+        return "invalid_json"
+    return type(e).__name__.lower()
