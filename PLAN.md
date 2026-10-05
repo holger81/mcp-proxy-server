@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#12](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#13](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -322,10 +322,11 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 2.2 one-shot migrations via `migrations_applied` ids (+4 tests) | `feat/one-shot-feed-migrations` (main) [#10] | ✅ CI green; merged `3542876` |
 | 2.3 refresh-failure keeps last good digest (+3 tests) | `fix/digest-refresh-guard` (main) [#11] | ✅ CI green; merged `237de9e` |
 | 2.4 `limited_get` 5 MB body cap in all fetchers (+6 tests) | `feat/limited-get` (main) [#12] | ✅ CI green; merged `179a50c` |
+| 3.1 SSRF guard `url_guard.py` + per-hop redirect checks (+24 tests) | `feat/ssrf-guard` (main) [#13] | ✅ CI green; merged `3065179` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
-Phase 2 is next (storage & fetch robustness).
+Phase 2 is done (PRs 2.1–2.4). Phase 3 (news-server security) is in progress.
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -333,5 +334,7 @@ Notes for later PRs (learned while writing the harness/tests):
 - mcp 1.27 low-level `CallToolRequest` handler receives the request directly and converts raised `McpError` into an `isError=True` `CallToolResult` — assert on `isError`, not exceptions.
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
 - `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
+- httpx ≥ 0.28 has **no** `on_redirect` event hook (unknown hook keys are silently dropped) — redirect interception lives in `limited_get`'s manual hop loop now.
+- Python ≥ 3.14 `ipaddress.is_private` excludes CGNAT `100.64.0.0/10` — check ranges explicitly in `url_guard`.
 
-Next: PR 3.1 (SSRF guard `url_guard.py`; D2: env `NEWS_MCP_SEARX_BASE_URL` trusted, tool params guarded, `NEWS_MCP_ALLOW_URLS` allowlist).
+Next: PR 3.2 (curator prompt hardening: untrusted-content fences + control-char stripping).
