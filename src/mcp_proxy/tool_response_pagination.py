@@ -10,6 +10,7 @@ from mcp import types as mcp_types
 from mcp.shared.exceptions import McpError
 
 from mcp_proxy.settings import Settings
+from mcp_proxy.tool_names import decode_proxy_tool_name
 from mcp_proxy.tool_response_cache import CachedToolResponse, ToolResponseCache
 
 _TRUNC_SUFFIX = " …[truncated]"
@@ -18,6 +19,11 @@ _TRUNC_SUFFIX = " …[truncated]"
 PAGINATION_ARG_KEYS: frozenset[str] = frozenset(
     {"responseCacheId", "responseOffset", "responseLimit"}
 )
+
+# PR 5.5: collision-proof namespaced spelling. Always reserved and stripped;
+# the bare legacy names are accepted for one more release but skipped when the
+# upstream tool declares a parameter of the same name.
+_PROXY_PARAM_PREFIX = "_proxy."
 
 
 @dataclass(frozen=True)
@@ -83,37 +89,71 @@ def _page_size(settings: Settings) -> int:
 
 def peel_pagination_params(
     raw: dict[str, Any],
+    *,
+    protected: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Remove pagination keys from a flat argument object."""
+    """Remove pagination keys from a flat argument object.
+
+    ``_proxy.responseOffset``-style names are always proxy-owned. Bare legacy
+    names are stripped too — except the ones in ``protected`` (declared by the
+    upstream tool's inputSchema), which stay in ``rest`` as upstream args
+    (PR 5.5). The returned dict always uses the bare canonical keys; the
+    namespaced spelling wins over a legacy duplicate.
+    """
     rest = dict(raw)
     pag: dict[str, Any] = {}
     for key in PAGINATION_ARG_KEYS:
-        if key in rest:
-            pag[key] = rest.pop(key)
+        namespaced = _PROXY_PARAM_PREFIX + key
+        if namespaced in rest:
+            pag[key] = rest.pop(namespaced)
+    for key in PAGINATION_ARG_KEYS:
+        if key not in rest or key in protected:
+            continue
+        value = rest.pop(key)  # consumed either way; namespaced wins the value
+        pag.setdefault(key, value)
     return rest, pag
 
 
-def wrap_hot_tool_as_call_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def wrap_hot_tool_as_call_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    declared_params: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
     """Promote pagination fields from composite-tool args to callTool top level."""
-    clean, pag = peel_pagination_params(arguments)
+    clean, pag = peel_pagination_params(arguments, protected=declared_params)
     out: dict[str, Any] = {"toolName": tool_name, "arguments": clean}
     out.update(pag)
     return out
 
 
 def parse_call_tool_pagination(
-    call_tool_args: dict[str, Any], settings: Settings
+    call_tool_args: dict[str, Any],
+    settings: Settings,
+    *,
+    declared_params: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any] | None, ResponsePaginationRequest]:
-    """Read pagination from callTool args; strip it from upstream ``arguments``."""
+    """Read pagination from callTool args; strip it from upstream ``arguments``.
+
+    Precedence (PR 5.5): top-level namespaced > top-level legacy > nested
+    (inside ``arguments``) namespaced > nested legacy. ``declared_params``
+    (the upstream inputSchema properties, when known) keep same-named upstream
+    parameters out of the legacy peel.
+    """
     merged_pag: dict[str, Any] = {}
     tool_args = call_tool_args.get("arguments")
     clean_upstream: dict[str, Any] | None = None
     if isinstance(tool_args, dict):
-        clean_upstream, nested = peel_pagination_params(tool_args)
+        clean_upstream, nested = peel_pagination_params(
+            tool_args, protected=declared_params
+        )
         merged_pag.update(nested)
     for key in PAGINATION_ARG_KEYS:
         if key in call_tool_args:
             merged_pag[key] = call_tool_args[key]
+        namespaced = _PROXY_PARAM_PREFIX + key
+        if namespaced in call_tool_args:
+            merged_pag[key] = call_tool_args[namespaced]
     return clean_upstream, parse_response_pagination(merged_pag, settings)
 
 
@@ -203,9 +243,26 @@ def _build_page_payload(
         "hint": (
             "Large tool response split across pages. For the next slice, call the same tool again "
             "(the composite toolName or callTool) with this responseCacheId and responseOffset set "
-            "to offset + returnedChars. Pagination fields are proxy-only and are not sent upstream."
+            "to offset + returnedChars. Pagination fields are proxy-only and are not sent upstream; "
+            "if the upstream tool declares one of its own, use the namespaced spelling "
+            "(_proxy.responseCacheId, _proxy.responseOffset, _proxy.responseLimit)."
         ),
     }
+
+
+def _same_tool_name(a: str, b: str) -> bool:
+    """True when both spellings resolve to the same tool across naming schemes.
+
+    Cached pages may be created under the canonical name (``srv__tool``) and
+    replayed via the legacy ``srv/tool`` spelling (PR 5.5); a raw string
+    comparison wrongly rejected those.
+    """
+    if a == b:
+        return True
+    try:
+        return decode_proxy_tool_name(a) == decode_proxy_tool_name(b)
+    except ValueError:
+        return False
 
 
 def paginate_from_cache(
@@ -221,7 +278,7 @@ def paginate_from_cache(
     if page <= 0:
         return [mcp_types.TextContent(type="text", text=entry.text)]
 
-    if tool_name and entry.tool_name and tool_name != entry.tool_name:
+    if tool_name and entry.tool_name and not _same_tool_name(tool_name, entry.tool_name):
         raise McpError(
             mcp_types.ErrorData(
                 code=mcp_types.INVALID_PARAMS,
@@ -291,7 +348,11 @@ def paginate_call_tool_response(
 
     text = _join_text_blocks(blocks)
     if text is None:
-        return blocks
+        # PR 5.5: mixed content (text alongside image/audio/resource blocks)
+        # bypassed every size limit. The non-text payload cannot be paged, so
+        # cap the text blocks via truncation instead.
+        hard = settings.call_tool_response_text_max_chars
+        return _truncate_blocks(blocks, hard if hard > 0 else page)
 
     if len(text) <= page:
         hard = settings.call_tool_response_text_max_chars
