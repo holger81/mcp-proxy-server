@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import json
 import logging
 import os
@@ -351,37 +352,45 @@ def _split_proxy_tool_name(name: str) -> tuple[str, str]:
         ) from None
 
 
+class ToolRowOutcome(enum.Enum):
+    """PR 5.4: distinguish 'gone for good' from 'could not ask right now'."""
+
+    FOUND = "found"
+    MISSING = "missing"  # server unknown/disabled or tool not in upstream list → prune
+    ERROR = "error"  # transient (timeout/transport failure) → never prune
+
+
 async def _lookup_tool_row(
     store: ServerConfigStore,
     settings: Settings,
     composite: str,
-) -> dict[str, Any] | None:
+) -> tuple[ToolRowOutcome, dict[str, Any] | None]:
     """Resolve one discovery row for a composite tool name (for hot-tool list enrichment)."""
     try:
         sid, orig = decode_proxy_tool_name(composite)
     except ValueError:
-        return None
+        return ToolRowOutcome.MISSING, None
     if sid == _ADMIN_SERVER_ID:
         for row in _admin_tool_rows(settings):
             if row.get("_proxyUpstreamTool") == orig:
-                return _shape_tool_row_for_llm(dict(row), settings)
-        return None
+                return ToolRowOutcome.FOUND, _shape_tool_row_for_llm(dict(row), settings)
+        return ToolRowOutcome.MISSING, None
     upstream = store.get(sid)
     if upstream is None or not upstream.enabled:
-        return None
+        return ToolRowOutcome.MISSING, None
     try:
         with anyio.fail_after(settings.upstream_timeout_s):
             tools = await _list_upstream_tools(upstream, settings)
     except Exception:
         log.debug("lookup_tool_row: failed for %s", composite, exc_info=True)
-        return None
+        return ToolRowOutcome.ERROR, None
     match = [t for t in tools if t.name == orig]
     if not match:
-        return None
+        return ToolRowOutcome.MISSING, None
     defs = _tool_defs_for_server(upstream, match[:1], settings)
     if not defs:
-        return None
-    return _shape_tool_row_for_llm(defs[0], settings)
+        return ToolRowOutcome.MISSING, None
+    return ToolRowOutcome.FOUND, _shape_tool_row_for_llm(defs[0], settings)
 
 
 def _composite_tool_list_name(composite: str, settings: Settings) -> str:
@@ -417,9 +426,11 @@ async def _as_hot_call_tool_args(
     hot_key = _match_hot_stats_key(name, stats_store, settings)
     if hot_key is None:
         return name, args, None
-    row = await _lookup_tool_row(store, settings, hot_key)
-    if row is None:
-        if stats_store.remove(hot_key):
+    outcome, row = await _lookup_tool_row(store, settings, hot_key)
+    if outcome is not ToolRowOutcome.FOUND:
+        # PR 5.4: only prune when the tool is verifiably gone; a flaky or
+        # timed-out upstream must not wipe the popular-tool shortcut.
+        if outcome is ToolRowOutcome.MISSING and stats_store.remove(hot_key):
             log.info(
                 "Pruned stale popular tool shortcut %r on call (not available upstream)",
                 hot_key,
@@ -457,9 +468,10 @@ async def _verified_hot_tools(
         wire = _composite_tool_list_name(composite, settings)
         if is_tool_disabled(composite, disabled) or is_tool_disabled(wire, disabled):
             continue
-        row = await _lookup_tool_row(store, settings, composite)
-        if row is None:
-            if stats_store.remove(composite):
+        outcome, row = await _lookup_tool_row(store, settings, composite)
+        if outcome is not ToolRowOutcome.FOUND:
+            # PR 5.4: prune only on a verified miss, never on transient errors.
+            if outcome is ToolRowOutcome.MISSING and stats_store.remove(composite):
                 log.info(
                     "Pruned stale popular tool shortcut %r (not available upstream)",
                     composite,
