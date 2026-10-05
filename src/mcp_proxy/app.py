@@ -21,6 +21,7 @@ from mcp_proxy.log_buffer import attach_ring_logging
 from mcp_proxy.mcp_client_log import McpClientAuditMiddleware
 from mcp_proxy.live_mcp_tracker import LiveMcpTracker
 from mcp_proxy.mcp_live_tracker_middleware import McpLiveTrackerMiddleware
+from mcp_proxy.rate_limit import LoginRateLimiter
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.news_digest_refresher import NewsDigestRefresher
@@ -179,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tool_call_stats_store = ToolCallStatsStore(settings.data_dir)
     app.state.tool_response_cache = ToolResponseCache()
     app.state.live_mcp_tracker = LiveMcpTracker()
+    app.state.login_rate_limiter = LoginRateLimiter()
 
     if StreamableHTTPSessionManager is None:
         raise RuntimeError(
