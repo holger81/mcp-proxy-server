@@ -7,6 +7,7 @@ from mcp.shared.exceptions import McpError
 
 from mcp_proxy.client_store import ApiClientRecord
 from mcp_proxy.settings import Settings
+from mcp_proxy.tool_names import canonical_tool_key
 
 META_TOOL_NAMES: frozenset[str] = frozenset(
     {"searchToolsForDomain", "searchTool", "callTool", "htmlToPlainText"}
@@ -31,11 +32,16 @@ def merge_client_settings(
 def client_disabled_tools(client: ApiClientRecord | None) -> frozenset[str]:
     if client is None or not client.disabled_tools:
         return frozenset()
-    return frozenset(client.disabled_tools)
+    # Canonicalize stored entries so one disabled entry blocks every wire
+    # spelling of that tool (legacy `srv/tool`, safe `srv__tool`, hex
+    # fallback). Non-composite names (meta tools) map to themselves.
+    return frozenset(canonical_tool_key(x) for x in client.disabled_tools)
 
 
 def is_tool_disabled(wire_name: str, disabled: frozenset[str]) -> bool:
-    return wire_name in disabled
+    if wire_name in disabled:
+        return True
+    return canonical_tool_key(wire_name) in disabled
 
 
 def assert_tool_allowed(wire_name: str, disabled: frozenset[str]) -> None:

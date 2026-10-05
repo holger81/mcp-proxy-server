@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from mcp_proxy.models import validate_slug_id
+from mcp_proxy.tool_names import canonical_tool_key
 
 
 class ClientLlmLimits(BaseModel):
@@ -68,7 +69,12 @@ class ApiClientRecord(BaseModel):
         out: list[str] = []
         for raw in v:
             name = str(raw).strip()
-            if not name or name in seen:
+            if not name:
+                continue
+            # One stored spelling per tool: decode/re-encode so legacy
+            # `srv/tool` entries canonicalize to the safe wire form (PLAN 4.1).
+            name = canonical_tool_key(name)
+            if name in seen:
                 continue
             seen.add(name)
             out.append(name)
