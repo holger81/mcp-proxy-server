@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Self
 
@@ -166,3 +167,22 @@ class Settings(BaseSettings):
                 "MCP_PROXY_SESSION_SECRET (each at least 16 chars for the secret), "
                 "or MCP_PROXY_ADMIN_PASSWORD_FILE / MCP_PROXY_SESSION_SECRET_FILE for Docker secrets."
             )
+
+    def log_install_policy(self) -> None:
+        """PLAN 4.6a (D4 warn-first): announce the upcoming default flip.
+
+        Behavior is unchanged here — the defaults stay ``True`` this release.
+        Next release flips the default to ``false``; set the vars explicitly
+        now to be unaffected.
+        """
+        log = logging.getLogger("mcp_proxy.settings")
+        for env_name in ("MCP_PROXY_ALLOW_PYPI_INSTALL", "MCP_PROXY_ALLOW_NPM_INSTALL"):
+            if env_name not in os.environ:
+                log.warning(
+                    "%s is not set: automatic package installs currently default to "
+                    "enabled, but the default will change to disabled in the next "
+                    "release. Set %s=true to keep the current behavior or =false to "
+                    "opt in early.",
+                    env_name,
+                    env_name,
+                )
