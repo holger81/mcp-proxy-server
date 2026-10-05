@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from typing import TYPE_CHECKING
 
@@ -11,10 +12,48 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, RedirectResponse, Response
 
 if TYPE_CHECKING:
-    from mcp_proxy.client_store import ClientTokenStore
+    from mcp_proxy.client_store import ApiClientRecord, ClientTokenStore
     from mcp_proxy.settings import Settings
 
+logger = logging.getLogger("mcp_proxy.auth")
+
 SESSION_ADMIN_KEY = "admin"
+
+
+def _verify_bearer_with_retry(store: ClientTokenStore, token: str) -> bool:
+    """Store errors count as *unauthenticated* after one retry (PLAN 4.3).
+
+    Callers map False to their normal 401 path; we never let an exception
+    turn into a pass-through or an unlogged 500.
+    """
+    for attempt in (1, 2):
+        try:
+            return store.verify_bearer(token)
+        except Exception:  # noqa: BLE001 - any store failure
+            if attempt == 1:
+                continue
+            logger.exception(
+                "client store failed during bearer verification; "
+                "treating request as unauthenticated (fail closed)"
+            )
+            return False
+    return False
+
+
+def _resolve_bearer_with_retry(store: ClientTokenStore, token: str) -> ApiClientRecord | None:
+    """``resolve_bearer`` with one retry; errors resolve to None (PLAN 4.3)."""
+    for attempt in (1, 2):
+        try:
+            return store.resolve_bearer(token)
+        except Exception:  # noqa: BLE001 - any store failure
+            if attempt == 1:
+                continue
+            logger.exception(
+                "client store failed during bearer resolution; "
+                "treating request as unauthenticated (fail closed)"
+            )
+            return None
+    return None
 
 
 def _should_redirect_browser_to_login(request: Request) -> bool:
@@ -75,7 +114,7 @@ def require_api_access(request: Request) -> None:
     token = bearer_token(request)
     if token:
         store: ClientTokenStore = request.app.state.client_store
-        if store.verify_bearer(token):
+        if _verify_bearer_with_retry(store, token):
             return
     raise HTTPException(
         status_code=401,
@@ -98,7 +137,7 @@ def require_admin_api(request: Request) -> None:
     token = bearer_token(request)
     if token:
         store: ClientTokenStore = request.app.state.client_store
-        client = store.resolve_bearer(token)
+        client = _resolve_bearer_with_retry(store, token)
         if client is not None:
             if client.can_admin:
                 return
@@ -151,7 +190,7 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
             token = bearer_token(request)
             if token:
                 store: ClientTokenStore = request.app.state.client_store
-                if store.verify_bearer(token):
+                if _verify_bearer_with_retry(store, token):
                     return await call_next(request)
             if _should_redirect_browser_to_login(request):
                 return RedirectResponse(url="/admin/login.html", status_code=302)

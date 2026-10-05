@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
+from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.live_mcp_tracker import (
@@ -15,6 +17,8 @@ from mcp_proxy.live_mcp_tracker import (
     current_mcp_session_id,
     current_mcp_user_agent,
 )
+
+logger = logging.getLogger("mcp_proxy.auth")
 
 
 def _bearer_from_headers(hdrs: dict[str, str]) -> str | None:
@@ -73,18 +77,32 @@ class McpLiveTrackerMiddleware:
         api_client_id = None
         api_client_label = None
         api_client_rec = None
-        try:
-            token = _bearer_from_headers(hdrs)
-            if token and self.client_store is not None:
-                rec = self.client_store.resolve_bearer(token)
-                if rec is not None:
-                    api_client_rec = rec
-                    api_client_id = rec.id
-                    api_client_label = rec.label
-        except Exception:
-            api_client_id = None
-            api_client_label = None
-            api_client_rec = None
+        token = _bearer_from_headers(hdrs)
+        if token and self.client_store is not None:
+            # Fail closed (PLAN 4.3): if the store cannot answer who this
+            # token belongs to, reject instead of serving the request with
+            # an anonymous (policy-free) context. Retry once first — these
+            # errors are usually transient file/IO hiccups.
+            for attempt in (1, 2):
+                try:
+                    rec = self.client_store.resolve_bearer(token)
+                    if rec is not None:
+                        api_client_rec = rec
+                        api_client_id = rec.id
+                        api_client_label = rec.label
+                    break
+                except Exception:  # noqa: BLE001 - any store failure
+                    if attempt == 1:
+                        continue
+                    logger.exception(
+                        "client store failed to resolve bearer token for /mcp "
+                        "request; rejecting (fail closed)"
+                    )
+                    response = JSONResponse(
+                        {"detail": "Authentication backend unavailable. Try again."},
+                        status_code=401,
+                    )
+                    return await response(scope, receive, send)
 
         tok_sess = current_mcp_session_id.set(sess)
         tok_peer = current_mcp_peer.set(peer)
