@@ -531,6 +531,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
         </p>
         <label for="client-config-label">Label</label>
         <input id="client-config-label" type="text" autocomplete="off" />
+        <label for="client-config-admin"><input id="client-config-admin" type="checkbox" /> Admin API access <span class="hint">(this token may also manage servers &amp; catalog via <code>/api</code>; off = MCP-only)</span></label>
         <label for="client-config-instructions">Instructions <span class="hint">(markdown ok, max 12000 chars)</span></label>
         <textarea id="client-config-instructions" rows="6" placeholder="e.g. Prefer smart-home domain for lights. Never call mail tools unless asked."></textarea>
         <h4 style="margin-top: 1rem">LLM context limits <span class="hint">(optional overrides)</span></h4>
@@ -1538,6 +1539,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             document.getElementById("client-config-label").value = data.label || "";
             setClientConfigHeading(data.label, clientId);
             document.getElementById("client-config-instructions").value = data.instructions || "";
+            document.getElementById("client-config-admin").checked = !!data.can_admin;
             buildClientLlmLimitsForm(data.global_llm_limits, data.llm_limits);
             buildClientToolsCheckboxes(catalog.tools || [], new Set(data.disabled_tools || []));
             panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1577,6 +1579,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             if (c.has_llm_overrides) parts.push("custom limits");
             if (c.disabled_tools_count) parts.push(c.disabled_tools_count + " off");
             if (c.has_instructions) parts.push("instructions");
+            if (c.can_admin) parts.push("admin API");
             tdP.textContent = parts.length ? parts.join(", ") : "defaults";
             const tdA = document.createElement("td");
             const cfg = document.createElement("button");
@@ -1664,6 +1667,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             instructions,
             llm_limits: readClientLlmLimitsFromForm(),
             disabled_tools: readDisabledToolsFromForm(),
+            can_admin: document.getElementById("client-config-admin").checked,
           };
           const res = await apiFetch(apiClients + "/" + encodeURIComponent(clientConfigEditingId), {
             method: "PATCH",
