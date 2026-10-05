@@ -41,6 +41,7 @@ from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import HOT_TOOL_SLOTS, ToolCallStatsStore
 from mcp_proxy.tool_response_cache import ToolResponseCache
 from mcp_proxy.tool_response_pagination import (
+    apply_upstream_error_semantics,
     paginate_call_tool_response,
     paginate_from_cache,
     parse_call_tool_pagination,
@@ -1391,13 +1392,22 @@ def build_proxy_mcp_server(
                         message=detail or type(e).__name__,
                     )
                 ) from e
-            stats_store.record_success(composite_key)
-            return paginate_call_tool_response(
+            # An upstream tool error must not count as a successful call once
+            # propagation is on (stats drive the popular-tool shortcut).
+            if not (settings.propagate_tool_errors and result.isError):
+                stats_store.record_success(composite_key)
+            blocks = paginate_call_tool_response(
                 list(result.content or []),
                 settings=eff,
                 cache=response_cache,
                 tool_name=composite_key,
                 pagination=pagination,
+            )
+            # PR 5.2a: with MCP_PROXY_PROPAGATE_TOOL_ERRORS=true keep the
+            # upstream isError flag + structuredContent; default keeps today's
+            # content-blocks-only behavior.
+            return apply_upstream_error_semantics(
+                result, blocks, settings=settings
             )
 
         if name == "listServers":

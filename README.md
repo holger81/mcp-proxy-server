@@ -363,6 +363,7 @@ Then:
 | MCP_PROXY_DATA_DIR | /data | Storage |
 | MCP_PROXY_ALLOW_PYPI_INSTALL | true | Allow PyPI installs (**default will change to `false` in the next release** — set it explicitly) |
 | MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs (**default will change to `false` in the next release** — set it explicitly) |
+| MCP_PROXY_PROPAGATE_TOOL_ERRORS | false | Forward upstream tool errors (`isError`) and `structuredContent` verbatim (**default will change to `true` in the next release** — set it explicitly) |
 | MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
 | MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
 | MCP_PROXY_ALLOW_NO_AUTH | false | Next release: must be `true` to start without a password on a non-loopback bind (warn-only today) |

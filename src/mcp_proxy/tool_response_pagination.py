@@ -311,3 +311,32 @@ def paginate_call_tool_response(
         tool_name=tool_name,
     )
     return [mcp_types.TextContent(type="text", text=_json_payload(payload, settings))]
+
+
+def apply_upstream_error_semantics(
+    result: mcp_types.CallToolResult,
+    blocks: list[Any],
+    *,
+    settings: Settings,
+) -> list[Any] | mcp_types.CallToolResult:
+    """PR 5.2a: surface upstream ``isError`` / ``structuredContent`` when enabled.
+
+    Off (default this release, D4 warn-first): today's behavior — content
+    blocks only; an upstream tool error arrives as normal text and the SDK
+    marks the result ``isError=False``.
+
+    On: return a ``CallToolResult`` so the SDK passes ``isError`` through
+    verbatim (tool errors stay tool errors) and ``structuredContent`` is
+    forwarded untouched. ``blocks`` is the *paginated* text content; the
+    pagination layer only ever rewrites text blocks, so structured content
+    is unaffected by paging.
+    """
+    if not settings.propagate_tool_errors:
+        return blocks
+    if not result.isError and result.structuredContent is None:
+        return blocks
+    return mcp_types.CallToolResult(
+        content=blocks,
+        structuredContent=result.structuredContent,
+        isError=bool(result.isError),
+    )
