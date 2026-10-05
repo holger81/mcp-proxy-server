@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#27](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#28](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -337,6 +337,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.3 Tracker eviction + uuid ids + shielded end (+4 tests) | `fix/tracker-evict` (main) [#25] | ✅ CI green; merged `e0043fe` |
 | 5.4 Write-behind stats + key cap + tri-state prune (+9 tests) | `fix/stats-write-behind` (main) [#26] | ✅ CI green; merged `f7b8c3e` |
 | 5.5 `_proxy.*` params + schema-aware peel + mixed caps (+10 tests) | `fix/pagination-collisions` (main) [#27] | ✅ CI green; merged `3e96f08` |
+| 5.6 Degraded-upstream + truncation surfacing (+6 tests) | `fix/discovery-honesty` (main) [#28] | ✅ CI green; merged `7fb5357` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -353,4 +354,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 5.5 (pagination: truncation on mixed content; proxy params as `_proxy.responseOffset/…` with legacy-name shim; peel legacy only when upstream schema lacks them; decoded-pair cache validation). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 5.7 (instructions: stop mutating shared `server.instructions` in `list_tools`; per-session delivery or flag-off + warning per PLAN). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
