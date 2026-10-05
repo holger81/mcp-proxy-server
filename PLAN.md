@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#11](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#12](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -321,6 +321,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 2.1 atomic locked `feeds.yaml` writes + corrupt-YAML quarantine (+4 tests) | `fix/feed-store-atomic-writes` (main) [#9] | ✅ CI green; merged `6f2e70c` |
 | 2.2 one-shot migrations via `migrations_applied` ids (+4 tests) | `feat/one-shot-feed-migrations` (main) [#10] | ✅ CI green; merged `3542876` |
 | 2.3 refresh-failure keeps last good digest (+3 tests) | `fix/digest-refresh-guard` (main) [#11] | ✅ CI green; merged `237de9e` |
+| 2.4 `limited_get` 5 MB body cap in all fetchers (+6 tests) | `feat/limited-get` (main) [#12] | ✅ CI green; merged `179a50c` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -333,4 +334,4 @@ Notes for later PRs (learned while writing the harness/tests):
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
 - `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
 
-Next: PR 2.4 (`limited_get` response-size cap in `http_util`).
+Next: PR 3.1 (SSRF guard `url_guard.py`; D2: env `NEWS_MCP_SEARX_BASE_URL` trusted, tool params guarded, `NEWS_MCP_ALLOW_URLS` allowlist).
