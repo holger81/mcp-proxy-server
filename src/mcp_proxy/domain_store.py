@@ -9,7 +9,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from mcp_proxy.models import validate_slug_id
+from mcp_proxy.models import (
+    RESERVED_DOMAIN_IDS,
+    reject_reserved_id,
+    validate_slug_id,
+)
 
 
 class DomainRecord(BaseModel):
@@ -23,7 +27,8 @@ class DomainRecord(BaseModel):
     @field_validator("id")
     @classmethod
     def id_slug(cls, v: str) -> str:
-        return validate_slug_id(v)
+        v = validate_slug_id(v)
+        return reject_reserved_id(v, RESERVED_DOMAIN_IDS, "admin domain")
 
     @field_validator("label", mode="before")
     @classmethod

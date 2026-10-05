@@ -17,6 +17,21 @@ def validate_slug_id(v: str) -> str:
     return v
 
 
+# Ids of the proxy's built-in virtual admin server/domain (PLAN 4.5). A user
+# server or domain registered with the same id would collide with the built-in
+# routing in proxy_mcp (tool names, domain listings).
+RESERVED_SERVER_IDS = frozenset({"mcp-tools-admin"})
+RESERVED_DOMAIN_IDS = frozenset({"mcp-tools-administration"})
+
+
+def reject_reserved_id(v: str, reserved: frozenset[str], kind: str) -> str:
+    if v in reserved:
+        raise ValueError(
+            f"'{v}' is reserved for the proxy's built-in {kind}; choose another id"
+        )
+    return v
+
+
 def _split_command(v: Any) -> list[str] | None:
     if v is None or v == "":
         return None
@@ -135,12 +150,14 @@ class UpstreamServer(BaseModel):
     @field_validator("id")
     @classmethod
     def id_slug(cls, v: str) -> str:
-        return validate_slug_id(v)
+        v = validate_slug_id(v)
+        return reject_reserved_id(v, RESERVED_SERVER_IDS, "admin server")
 
     @field_validator("domain")
     @classmethod
     def domain_slug(cls, v: str) -> str:
-        return validate_slug_id(v)
+        v = validate_slug_id(v)
+        return reject_reserved_id(v, RESERVED_DOMAIN_IDS, "admin domain")
 
     @field_validator("llm_context", mode="before")
     @classmethod
