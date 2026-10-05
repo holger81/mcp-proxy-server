@@ -1,6 +1,13 @@
-"""One-time URL fixes for bundled feeds (existing installs keep feeds.yaml on disk)."""
+"""One-time feed list migrations (each recorded in feeds.yaml, so it runs once).
+
+Applied migration IDs are persisted under ``migrations_applied`` in
+feeds.yaml. That makes user intent sticky: deleted feeds are not resurrected
+and re-enabled feeds stay enabled (decision D1).
+"""
 
 from __future__ import annotations
+
+from typing import Iterable
 
 from mcp_news_server.models import FeedEntry
 
@@ -38,21 +45,43 @@ SUPPLEMENTAL_FEEDS: list[FeedEntry] = [
 ]
 
 
-def migrate_feeds(feeds: list[FeedEntry]) -> tuple[list[FeedEntry], bool]:
-    """Apply URL replacements, disable dead feeds, append supplemental sources."""
-    out: list[FeedEntry] = []
+def migrate_feeds(
+    feeds: list[FeedEntry], applied: Iterable[str] = ()
+) -> tuple[list[FeedEntry], list[str], bool]:
+    """Apply every migration whose ID is not in ``applied`` yet.
+
+    Each migration is recorded per item (``kind:<url>``), so a future release
+    only needs to add new entries to run for installs that lack them. Returns
+    ``(feeds, newly_recorded_ids, changed)``; the caller persists the union of
+    ``applied`` and the newly recorded IDs alongside the feed list.
+    """
+    handled = set(applied)
+    recorded: list[str] = []
+
+    def once(migration_id: str) -> bool:
+        if migration_id in handled:
+            return False
+        handled.add(migration_id)
+        recorded.append(migration_id)
+        return True
+
     changed = False
+    out: list[FeedEntry] = []
     seen: set[str] = set()
 
     for f in feeds:
         url = f.url.strip()
-        if url in URL_REPLACEMENTS:
+
+        rid = f"url-replacement:{url}"
+        if url in URL_REPLACEMENTS and once(rid):
             url = URL_REPLACEMENTS[url]
             changed = True
-        if url in DISABLE_URLS:
-            if f.enabled:
-                f = FeedEntry(url=url, label=f.label, enabled=False)
-                changed = True
+
+        rid = f"disable-dead-feed:{url}"
+        if url in DISABLE_URLS and once(rid) and f.enabled:
+            f = FeedEntry(url=url, label=f.label, enabled=False)
+            changed = True
+
         if url in seen:
             continue
         seen.add(url)
@@ -61,9 +90,9 @@ def migrate_feeds(feeds: list[FeedEntry]) -> tuple[list[FeedEntry], bool]:
         out.append(f)
 
     for extra in SUPPLEMENTAL_FEEDS:
-        if extra.url not in seen:
+        if once(f"supplemental-feed:{extra.url}") and extra.url not in seen:
             out.append(extra)
             seen.add(extra.url)
             changed = True
 
-    return out, changed
+    return out, recorded, changed
