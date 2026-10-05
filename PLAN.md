@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#14](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#15](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -324,6 +324,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 2.4 `limited_get` 5 MB body cap in all fetchers (+6 tests) | `feat/limited-get` (main) [#12] | ✅ CI green; merged `179a50c` |
 | 3.1 SSRF guard `url_guard.py` + per-hop redirect checks (+24 tests) | `feat/ssrf-guard` (main) [#13] | ✅ CI green; merged `3065179` |
 | 3.2 Curator prompt hardening (fences + sanitize) (+3 tests) | `fix/curator-prompt-hardening` (main) [#14] | ✅ CI green; merged `8adc8e3` |
+| 3.3 Error classes in tool responses; details to logs (+6 tests) | `fix/error-surfaces` (main) [#15] | ✅ CI green; merged `b1cfcc2` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
