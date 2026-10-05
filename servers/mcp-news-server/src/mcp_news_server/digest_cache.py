@@ -125,6 +125,36 @@ class DigestCache:
         )
         tmp.replace(path)
 
+    def _payload_for_digest(self, digest: str) -> dict[str, Any]:
+        if digest == "today":
+            return self._today_payload
+        if digest == "germany":
+            return self._germany_payload
+        return self._local_payload
+
+    def _store_payload(self, digest: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist payload, but keep a good digest on a total refresh failure.
+
+        When the new payload has zero items while the previous one had items
+        (all feeds down, DNS failure, parse errors, ...), the previous digest
+        keeps serving and only the fresh error list is attached. A transient
+        upstream outage must never blank the cache.
+        """
+        prev = self._payload_for_digest(digest)
+        if payload.get("itemCount", 0) == 0 and prev.get("itemCount", 0) > 0:
+            log.warning(
+                "digest %s refresh produced 0 items; keeping previous payload "
+                "with %s item(s)",
+                digest,
+                prev["itemCount"],
+            )
+            kept = dict(prev)
+            kept["errors"] = payload.get("errors", [])
+            self._write_disk(_path_for_digest(self, digest), kept)
+            return kept
+        self._write_disk(_path_for_digest(self, digest), payload)
+        return payload
+
     def snapshot_today(self) -> dict[str, Any]:
         return json.loads(json.dumps(self._today_payload, default=str))
 
@@ -180,11 +210,7 @@ class DigestCache:
                 }
             )
             pl = _finalize_payload([], errors, digest, max_total, min_fp, feed_count=0)
-            self._write_disk(
-                _path_for_digest(self, digest),
-                pl,
-            )
-            return pl
+            return self._store_payload(digest, pl)
 
         async with async_client() as client:
             merged = await gather_rss_for_feeds(
@@ -231,11 +257,7 @@ class DigestCache:
             # the `async with` used to hit a closed client (curator never worked).
             pl = await maybe_curate_digest_payload(pl, digest=digest, client=client)
 
-        self._write_disk(
-            _path_for_digest(self, digest),
-            pl,
-        )
-        return pl
+        return self._store_payload(digest, pl)
 
     async def run_periodic_refresh(self) -> None:
         interval = _refresh_interval_s()
