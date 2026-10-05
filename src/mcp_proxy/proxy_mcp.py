@@ -418,14 +418,19 @@ async def _as_hot_call_tool_args(
     store: ServerConfigStore,
     settings: Settings,
     stats_store: ToolCallStatsStore,
-) -> tuple[str, dict[str, Any], str | None]:
+) -> tuple[str, dict[str, Any], str | None, frozenset[str]]:
     """If ``name`` is a verified popular shortcut, rewrite to callTool.
 
-    Returns ``(name, args, display_composite)``. Stale shortcuts are pruned and left unchanged.
+    Returns ``(name, args, display_composite, declared_params)`` where
+    ``declared_params`` are the upstream tool's own inputSchema properties —
+    known only on this path, and forwarded to the callTool parse (PR 5.5) so
+    an upstream parameter named ``responseOffset/…`` is not peeled as a proxy
+    field. Stale shortcuts are pruned and left unchanged.
     """
+    no_declared: frozenset[str] = frozenset()
     hot_key = _match_hot_stats_key(name, stats_store, settings)
     if hot_key is None:
-        return name, args, None
+        return name, args, None, no_declared
     outcome, row = await _lookup_tool_row(store, settings, hot_key)
     if outcome is not ToolRowOutcome.FOUND:
         # PR 5.4: only prune when the tool is verifiably gone; a flaky or
@@ -435,9 +440,19 @@ async def _as_hot_call_tool_args(
                 "Pruned stale popular tool shortcut %r on call (not available upstream)",
                 hot_key,
             )
-        return name, args, None
+        return name, args, None, no_declared
     wire = str(row.get("toolName") or hot_key)
-    return "callTool", wrap_hot_tool_as_call_tool(wire, args), wire
+    # PR 5.5: the upstream schema is known here, so a legit upstream parameter
+    # named responseOffset/… must not be eaten as a proxy pagination field.
+    schema = row.get("inputSchema")
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    declared = frozenset(props) if isinstance(props, dict) else frozenset()
+    return (
+        "callTool",
+        wrap_hot_tool_as_call_tool(wire, args, declared_params=declared),
+        wire,
+        declared,
+    )
 
 
 def _hot_tool_from_row(row: dict[str, Any]) -> mcp_types.Tool:
@@ -909,7 +924,10 @@ def build_meta_tool_list(
                 + "Pass arguments as a JSON object; shape must match the tool's inputSchema from the search result. "
                 "Oversized text replies are paginated: the JSON body includes pagination.responseCacheId. "
                 "Pass responseCacheId and responseOffset on callTool (top level) or on the composite tool "
-                "call (same fields as upstream args); the proxy strips them before invoking upstream."
+                "call (same fields as upstream args); the proxy strips them before invoking upstream. "
+                "If the upstream tool declares its own parameter named responseCacheId/responseOffset/"
+                "responseLimit, address the proxy field via the namespaced spelling (_proxy.responseOffset "
+                "etc.), which is always reserved."
             ),
             inputSchema={
                 "type": "object",
@@ -942,6 +960,21 @@ def build_meta_tool_list(
                         description=(
                             "Optional page size in characters (capped by the server page limit)."
                         ),
+                        minimum=1,
+                    ),
+                    "_proxy.responseCacheId": {
+                        "type": "string",
+                        "description": (
+                            "Namespaced form of responseCacheId; always proxy-owned even when the "
+                            "upstream tool declares a parameter of the same name."
+                        ),
+                    },
+                    "_proxy.responseOffset": _schema_int(
+                        description="Namespaced form of responseOffset.",
+                        minimum=0,
+                    ),
+                    "_proxy.responseLimit": _schema_int(
+                        description="Namespaced form of responseLimit.",
                         minimum=1,
                     ),
                 },
@@ -1099,7 +1132,7 @@ def build_proxy_mcp_server(
         name: str, arguments: dict | None
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
-        name, args, hot_wire = await _as_hot_call_tool_args(
+        name, args, hot_wire, _declared = await _as_hot_call_tool_args(
             name, args, store, settings, stats_store
         )
         display_tool = hot_wire or (
@@ -1123,7 +1156,7 @@ def build_proxy_mcp_server(
         eff = _effective_settings(settings)
         disabled = _disabled_for_request()
         args = arguments or {}
-        name, args, hot_wire = await _as_hot_call_tool_args(
+        name, args, hot_wire, declared_params = await _as_hot_call_tool_args(
             name, args, store, settings, stats_store
         )
         if hot_wire is not None:
@@ -1304,7 +1337,9 @@ def build_proxy_mcp_server(
                         message="'arguments' must be a JSON object when provided.",
                     )
                 )
-            tool_args, pagination = parse_call_tool_pagination(args, eff)
+            tool_args, pagination = parse_call_tool_pagination(
+                args, eff, declared_params=declared_params
+            )
             composite_key = tool_name.strip()
             assert_tool_allowed(composite_key, disabled)
             if pagination.cache_id:
