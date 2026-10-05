@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#26](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#27](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -336,6 +336,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.2a `isError`/`structuredContent` behind flag (+6 tests) | `feat/propagate-tool-errors` (main) [#24] | ✅ CI green; merged `a7945e1` |
 | 5.3 Tracker eviction + uuid ids + shielded end (+4 tests) | `fix/tracker-evict` (main) [#25] | ✅ CI green; merged `e0043fe` |
 | 5.4 Write-behind stats + key cap + tri-state prune (+9 tests) | `fix/stats-write-behind` (main) [#26] | ✅ CI green; merged `f7b8c3e` |
+| 5.5 `_proxy.*` params + schema-aware peel + mixed caps (+10 tests) | `fix/pagination-collisions` (main) [#27] | ✅ CI green; merged `3e96f08` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
