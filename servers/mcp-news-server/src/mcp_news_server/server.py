@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from typing import Any
@@ -21,10 +22,12 @@ from mcp_news_server.fetchers import (
     safe_json_dumps,
     searx_search,
 )
-from mcp_news_server.http_util import async_client
+from mcp_news_server.http_util import async_client, classify_error
 from mcp_news_server.models import NewsItem
 from mcp_news_server.store import FeedStore, default_data_dir
 from mcp_news_server.url_guard import UrlBlockedError, assert_safe_public_url
+
+log = logging.getLogger(__name__)
 
 _INSTRUCTIONS = """\
 Pre-built digests (fast): `news_today`, `news_germany`, and `news_local` return cached headlines refreshed automatically \
@@ -561,12 +564,14 @@ def build_news_server() -> Server:
                     try:
                         assert_safe_public_url(u)
                     except UrlBlockedError as e:
-                        errors.append({"url": u, "error": f"blocked: {e}"})
+                        log.warning("ingest URL blocked for %s: %s", u, e)
+                        errors.append({"url": u, "error": "url_blocked"})
                         return None
                     try:
                         return await fetch_page_metadata(client, u)
                     except Exception as e:
-                        errors.append({"url": u, "error": str(e) or type(e).__name__})
+                        log.warning("ingest failed for %s: %s", u, e)
+                        errors.append({"url": u, "error": classify_error(e)})
                         return None
 
                 results = await asyncio.gather(*(one(u) for u in urls))
@@ -701,10 +706,11 @@ def build_news_server() -> Server:
                                     categories=searx_cat_eff,
                                 )
                             except Exception as e:
+                                log.warning("searx query %r failed: %s", sq, e)
                                 errors.append(
                                     {
                                         "source": f"searx:{sq}",
-                                        "error": str(e) or type(e).__name__,
+                                        "error": classify_error(e),
                                     }
                                 )
                                 return []
@@ -721,15 +727,15 @@ def build_news_server() -> Server:
                         try:
                             assert_safe_public_url(u)
                         except UrlBlockedError as e:
-                            errors.append(
-                                {"source": u, "error": f"blocked: {e}"}
-                            )
+                            log.warning("extra_url blocked for %s: %s", u, e)
+                            errors.append({"source": u, "error": "url_blocked"})
                             return None
                         try:
                             return await fetch_page_metadata(client, u)
                         except Exception as e:
+                            log.warning("extra_url fetch failed for %s: %s", u, e)
                             errors.append(
-                                {"source": u, "error": str(e) or type(e).__name__}
+                                {"source": u, "error": classify_error(e)}
                             )
                             return None
 

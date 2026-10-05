@@ -11,7 +11,7 @@ from typing import Any
 import feedparser
 import httpx
 
-from mcp_news_server.http_util import limited_get
+from mcp_news_server.http_util import classify_error, limited_get
 from mcp_news_server.models import FeedEntry, NewsItem
 
 log = logging.getLogger(__name__)
@@ -35,7 +35,8 @@ async def gather_rss_for_feeds(
                 max_items=max_per,
             )
         except Exception as e:
-            errors.append({"source": f.url, "error": str(e) or type(e).__name__})
+            log.warning("feed fetch failed for %s: %s", f.url, e)
+            errors.append({"source": f.url, "error": classify_error(e)})
             return []
 
     batches = await asyncio.gather(*(fetch_one(f) for f in feeds))
