@@ -306,7 +306,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#9](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#10](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -319,6 +319,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 1.4 nits: `removed` flag, `_int` bool-reject, docstrings, absolute `static_root` | `fix/nits-bundle` (0.1) [#7] | ✅ tests + smoke green |
 | docs PLAN.md | `docs/audit-plan` (main) [#2] | ✅ merged; ledger kept updated on main |
 | 2.1 atomic locked `feeds.yaml` writes + corrupt-YAML quarantine (+4 tests) | `fix/feed-store-atomic-writes` (main) [#9] | ✅ CI green; merged `6f2e70c` |
+| 2.2 one-shot migrations via `migrations_applied` ids (+4 tests) | `feat/one-shot-feed-migrations` (main) [#10] | ✅ CI green; merged `3542876` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -329,6 +330,6 @@ Notes for later PRs (learned while writing the harness/tests):
 - Tool names sanitize server-id hyphens → underscores (`smoke-echo` → `smoke_echo__echo`); legacy `server/tool` spelling still resolves.
 - mcp 1.27 low-level `CallToolRequest` handler receives the request directly and converts raised `McpError` into an `isError=True` `CallToolResult` — assert on `isError`, not exceptions.
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
-- `migrate_feeds` appends 3 supplemental Bay Area feeds on **every** store load — digest tests must account for them (respx catch-all).
+- `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
 
-Next: PR 2.2 (one-shot feed migrations; D1 resolved: user-enabled `DISABLE_URLS` feeds stay enabled).
+Next: PR 2.3 (failed refresh must not wipe a good digest).
