@@ -11,6 +11,7 @@ from typing import Any
 import feedparser
 import httpx
 
+from mcp_news_server.http_util import limited_get
 from mcp_news_server.models import FeedEntry, NewsItem
 
 log = logging.getLogger(__name__)
@@ -138,8 +139,7 @@ async def fetch_rss_via_http(
             )
         return out
 
-    r = await client.get(feed_url, follow_redirects=True)
-    r.raise_for_status()
+    r = await limited_get(client, feed_url)
     return await asyncio.to_thread(_load_and_parse, r.content)
 
 
@@ -172,8 +172,7 @@ def _extract_og(html: str) -> tuple[str | None, str | None]:
 
 
 async def fetch_page_metadata(client: httpx.AsyncClient, page_url: str) -> NewsItem:
-    r = await client.get(page_url, follow_redirects=True)
-    r.raise_for_status()
+    r = await limited_get(client, page_url)
     html = r.text
     t, d = _extract_og(html)
     title = t or page_url
@@ -209,8 +208,7 @@ async def searx_search(
     params: dict[str, str] = {"q": query, "format": "json"}
     if categories:
         params["categories"] = categories
-    r = await client.get(f"{root}/search", params=params, follow_redirects=True)
-    r.raise_for_status()
+    r = await limited_get(client, f"{root}/search", params=params)
     data = r.json()
     results = data.get("results") if isinstance(data, dict) else None
     if not isinstance(results, list):
