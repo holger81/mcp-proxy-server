@@ -25,7 +25,7 @@ from mcp_proxy.rate_limit import LoginRateLimiter
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.news_digest_refresher import NewsDigestRefresher
-from mcp_proxy.proxy_mcp import build_proxy_mcp_server
+from mcp_proxy.proxy_mcp import build_proxy_mcp_server, session_initialization_options
 from mcp_proxy.live_streamable_http_session_manager import (
     LiveBindingStreamableHTTPSessionManager,
 )
@@ -200,6 +200,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.mcp_session_manager = LiveBindingStreamableHTTPSessionManager(
         mcp_sdk_server,
         stateless=False,
+    )
+    # PR 5.7: per-session instructions computed at initialize from the caller's
+    # auth context (was a shared Server.instructions race across clients).
+    app.state.mcp_session_manager.initialization_options_factory = (
+        lambda: session_initialization_options(
+            mcp_sdk_server, app.state.server_store, settings
+        )
     )
 
     session_key = (
