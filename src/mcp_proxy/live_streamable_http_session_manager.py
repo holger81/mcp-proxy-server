@@ -12,6 +12,7 @@ flow) with a small wrapper around ``await self.app.run(...)``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextlib import contextmanager
 from http import HTTPStatus
 from uuid import uuid4
@@ -22,6 +23,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import Receive, Scope, Send
 
+from mcp.server.models import InitializationOptions
 from mcp.server.streamable_http import (
     MCP_SESSION_ID_HEADER,
     StreamableHTTPServerTransport,
@@ -48,6 +50,27 @@ def _bind_mcp_session(session_id: str | None):
 
 
 class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
+    """Session manager that binds session id ContextVars and per-session init options.
+
+    ``initialization_options_factory`` (set by app.py) is called *while handling
+    the initialize HTTP request*, so per-client instructions are computed from
+    that request's auth context instead of a shared mutable ``Server.instructions``
+    (PR 5.7).
+    """
+
+    initialization_options_factory: Callable[[], InitializationOptions] | None = (
+        None
+    )
+
+    def _current_initialization_options(self) -> InitializationOptions | None:
+        if self.initialization_options_factory is None:
+            return None
+        try:
+            return self.initialization_options_factory()
+        except Exception:  # pragma: no cover - defensive: fall back to defaults
+            logger.exception("per-session initialization options failed; using default")
+            return None
+
     async def _run_mcp_server(
         self,
         http_transport: StreamableHTTPServerTransport,
@@ -55,6 +78,7 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
         write_stream,
         *,
         stateless: bool,
+        init_options: InitializationOptions | None = None,
     ) -> None:
         sid = http_transport.mcp_session_id
         tok = current_mcp_session_id.set(sid) if sid else None
@@ -62,7 +86,7 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
             await self.app.run(
                 read_stream,
                 write_stream,
-                self.app.create_initialization_options(),
+                init_options or self.app.create_initialization_options(),
                 stateless=stateless,
             )
         finally:
@@ -76,6 +100,8 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
         send: Send,
     ) -> None:
         logger.debug("Stateless mode: Creating new transport for this request")
+        # Compute while this task still holds the request's auth context.
+        init_options = self._current_initialization_options()
         http_transport = StreamableHTTPServerTransport(
             mcp_session_id=None,
             is_json_response_enabled=self.json_response,
@@ -95,6 +121,7 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
                         read_stream,
                         write_stream,
                         stateless=True,
+                        init_options=init_options,
                     )
                 except Exception:  # pragma: no cover
                     logger.exception("Stateless session crashed")
@@ -137,6 +164,9 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
         if request_mcp_session_id is None:
             logger.debug("Creating new transport")
             async with self._session_creation_lock:
+                # Compute while this task still holds the initialize request's
+                # auth context (per-client instructions, PR 5.7).
+                init_options = self._current_initialization_options()
                 new_session_id = uuid4().hex
                 http_transport = StreamableHTTPServerTransport(
                     mcp_session_id=new_session_id,
@@ -170,6 +200,7 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
                                     read_stream,
                                     write_stream,
                                     stateless=False,
+                                    init_options=init_options,
                                 )
 
                             if idle_scope.cancelled_caught:

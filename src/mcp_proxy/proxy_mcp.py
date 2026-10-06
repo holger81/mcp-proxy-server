@@ -841,6 +841,23 @@ def _instructions_for_mcp_request(
     )
 
 
+def session_initialization_options(
+    server: Server, store: ServerConfigStore, settings: Settings
+) -> Any:
+    """Per-session InitializationOptions with request-scoped instructions (PR 5.7).
+
+    Must be called *while handling the initialize HTTP request* (the session
+    manager does that), where ``current_mcp_api_client`` is the requesting
+    client. Replaces the old pattern of assigning ``server.instructions``
+    inside ``list_tools`` — a shared mutable that leaked one client's custom
+    instructions into every other client's initialize response.
+    """
+    base = server.create_initialization_options()
+    return base.model_copy(
+        update={"instructions": _instructions_for_mcp_request(store, settings)}
+    )
+
+
 def build_meta_tool_list(
     domain_ids: list[str], settings: Settings
 ) -> list[mcp_types.Tool]:
@@ -1094,7 +1111,6 @@ def build_proxy_mcp_server(
 
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
-        server.instructions = _instructions_for_mcp_request(store, settings)
         return await _build_session_tool_list(
             store, _domain_ids(), settings, stats_store
         )
