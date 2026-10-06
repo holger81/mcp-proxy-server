@@ -16,6 +16,7 @@ from mcp_proxy.live_mcp_tracker import (
     current_mcp_peer,
     current_mcp_session_id,
     current_mcp_user_agent,
+    update_session_identity,
 )
 
 logger = logging.getLogger("mcp_proxy.auth")
@@ -110,6 +111,11 @@ class McpLiveTrackerMiddleware:
         tok_client = current_mcp_api_client.set(api_client_rec)
         tok_cid = current_mcp_api_client_id.set(api_client_id)
         tok_clabel = current_mcp_api_client_label.set(api_client_label)
+        if sess:
+            # Stateful session handlers run in the session's own task and
+            # cannot see the ContextVars set here; hand them the freshly
+            # resolved client via the per-session slot (PR 5.8).
+            update_session_identity(sess, api_client_rec)
         try:
             if sess:
                 await self.tracker.touch(

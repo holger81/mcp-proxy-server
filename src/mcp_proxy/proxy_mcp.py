@@ -50,8 +50,8 @@ from mcp_proxy.tool_response_pagination import (
 )
 from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
-    current_mcp_api_client,
     live_tool_span,
+    resolve_current_api_client,
 )
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
@@ -70,11 +70,11 @@ _TRUNC_SUFFIX = " …[truncated]"
 
 
 def _effective_settings(base: Settings) -> Settings:
-    return merge_client_settings(base, current_mcp_api_client.get())
+    return merge_client_settings(base, resolve_current_api_client())
 
 
 def _disabled_for_request() -> frozenset[str]:
-    return client_disabled_tools(current_mcp_api_client.get())
+    return client_disabled_tools(resolve_current_api_client())
 
 
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
@@ -832,7 +832,7 @@ def _instructions_for_mcp_request(
     store: ServerConfigStore, settings: Settings
 ) -> str:
     eff = _effective_settings(settings)
-    client = current_mcp_api_client.get()
+    client = resolve_current_api_client()
     client_note = (client.instructions or "").strip() if client else ""
     return full_instructions_for_store(
         store,
