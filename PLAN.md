@@ -219,6 +219,11 @@ a hook. Alternative (investigate in the PR): per-session Server instances.
 Tests: concurrent initialize from two tokens never sees the other's text.
 *Risk: low-medium — removes a currently-racy feature for clients that set custom
 instructions (release note).*
+**Delivered (#29):** neither flag-off nor per-session `Server` instances — a third,
+lighter option: the session manager builds `InitializationOptions` *inside* the
+initialize request, so `session_initialization_options()` swaps in the requesting
+client's text there via a new `initialization_options_factory` hook. Per-client
+instructions now work reliably instead of being removed.
 
 **PR 5.8 — Re-resolve client identity per request.**
 Resolve the API client from the *current request* (middleware already parses the
@@ -267,8 +272,9 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Explicitly deferred
 
-- **Per-session Server instances** (proper fix behind 5.7) — needs an SDK-support
-  spike.
+- **Per-session Server instances** — superseded for 5.7 by the manager's
+  `initialization_options_factory` (options built inside the initialize request);
+  only revisit if more per-session `Server` state than instructions needs isolating.
 - **Persistent stats/audit store** (sqlite) — only if in-memory + JSON proves
   insufficient.
 - **Auth: replace salted-SHA256 password digest** with argon2 — acceptable today
@@ -306,7 +312,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#28](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#29](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -338,6 +344,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.4 Write-behind stats + key cap + tri-state prune (+9 tests) | `fix/stats-write-behind` (main) [#26] | ✅ CI green; merged `f7b8c3e` |
 | 5.5 `_proxy.*` params + schema-aware peel + mixed caps (+10 tests) | `fix/pagination-collisions` (main) [#27] | ✅ CI green; merged `3e96f08` |
 | 5.6 Degraded-upstream + truncation surfacing (+6 tests) | `fix/discovery-honesty` (main) [#28] | ✅ CI green; merged `7fb5357` |
+| 5.7 Per-session instructions; no `Server.instructions` mutation (+4 tests) | `fix/per-client-instructions` (main) [#29] | ✅ CI green; merged `61a2142` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -354,4 +361,9 @@ Notes for later PRs (learned while writing the harness/tests):
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
-Next: PR 5.7 (instructions: stop mutating shared `server.instructions` in `list_tools`; per-session delivery or flag-off + warning per PLAN). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+- `mcp` SDK: `Server.create_initialization_options()` reads `self.instructions` at
+  call time, and the session manager calls it **while handling the initialize HTTP
+  request** — that is what makes 5.7's per-request-scoped options factory safe.
+- `ToolCallStatsStore`/`Settings` take `pathlib.Path` (not `str`) for `data_dir`.
+
+Next: PR 5.8 (re-resolve client identity per request instead of pinning at session init). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
