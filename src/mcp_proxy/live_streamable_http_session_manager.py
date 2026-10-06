@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http import HTTPStatus
 from uuid import uuid4
 
@@ -31,7 +31,10 @@ from mcp.server.streamable_http import (
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import INVALID_REQUEST, ErrorData, JSONRPCError
 
-from mcp_proxy.live_mcp_tracker import current_mcp_session_id
+from mcp_proxy.live_mcp_tracker import (
+    current_mcp_session_id,
+    session_identity_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,13 +85,18 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
     ) -> None:
         sid = http_transport.mcp_session_id
         tok = current_mcp_session_id.set(sid) if sid else None
+        # Stateful sessions run every tool handler in *this* task, whose
+        # ContextVars freeze at creation; the per-session identity slot lets
+        # the middleware hand the current request's client to handlers (PR 5.8).
+        ident_scope = session_identity_scope(sid) if sid else nullcontext()
         try:
-            await self.app.run(
-                read_stream,
-                write_stream,
-                init_options or self.app.create_initialization_options(),
-                stateless=stateless,
-            )
+            with ident_scope:
+                await self.app.run(
+                    read_stream,
+                    write_stream,
+                    init_options or self.app.create_initialization_options(),
+                    stateless=stateless,
+                )
         finally:
             if tok is not None:
                 current_mcp_session_id.reset(tok)

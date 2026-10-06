@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import time
 import uuid
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,77 @@ current_mcp_api_client_id: ContextVar[str | None] = ContextVar(
 current_mcp_api_client_label: ContextVar[str | None] = ContextVar(
     "current_mcp_api_client_label", default=None
 )
+
+
+@dataclass(slots=True)
+class SessionIdentity:
+    """Mutable identity slot for one live *stateful* MCP session (PR 5.8).
+
+    Streamable HTTP runs the MCP session loop (and therefore every tool
+    handler) in a long-lived background task whose ContextVars are snapshotted
+    when the session is created, so the middleware's per-request
+    ``current_mcp_api_client`` never reaches handlers of an existing session.
+    The manager registers one of these slots per session; the middleware
+    updates ``client`` from the *current* request's resolved bearer before each
+    request is dispatched, so token revocation and per-client policy changes
+    take effect on the next call instead of at re-initialize.
+    """
+
+    client: ApiClientRecord | None = None
+
+
+# session id -> live slot (only for stateful sessions while they run)
+_session_identities: dict[str, SessionIdentity] = {}
+
+_current_session_identity: ContextVar[SessionIdentity | None] = ContextVar(
+    "current_session_identity", default=None
+)
+
+
+@contextmanager
+def session_identity_scope(session_id: str) -> Iterator[SessionIdentity]:
+    """Bind a fresh identity slot for ``session_id`` around the session loop.
+
+    Seed value is the *initializing* request's client (the caller's ContextVar
+    is authoritative there); later requests update the slot in place.
+    """
+    ident = SessionIdentity(client=current_mcp_api_client.get())
+    _session_identities[session_id] = ident
+    tok = _current_session_identity.set(ident)
+    try:
+        yield ident
+    finally:
+        _current_session_identity.reset(tok)
+        if _session_identities.get(session_id) is ident:
+            del _session_identities[session_id]
+
+
+def update_session_identity(
+    session_id: str, client: ApiClientRecord | None
+) -> None:
+    """Record the identity of the HTTP request currently being dispatched."""
+    ident = _session_identities.get(session_id)
+    if ident is not None:
+        ident.client = client
+
+
+def session_identity(session_id: str) -> SessionIdentity | None:
+    """Live identity slot for ``session_id`` (diagnostics/tests)."""
+    return _session_identities.get(session_id)
+
+
+def resolve_current_api_client() -> ApiClientRecord | None:
+    """API client to enforce policy for *right now*.
+
+    Inside a stateful MCP session loop this is the client of the HTTP request
+    currently being served (updated per request, PR 5.8). Everywhere else —
+    stateless mode, initialize-time computation in the worker task, stdio —
+    the per-request ContextVar set by the middleware is already correct.
+    """
+    ident = _current_session_identity.get()
+    if ident is not None:
+        return ident.client
+    return current_mcp_api_client.get()
 
 
 def _now_ms() -> int:
