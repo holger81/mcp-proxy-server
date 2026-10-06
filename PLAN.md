@@ -231,6 +231,9 @@ bearer) via a request-scoped ContextVar set per HTTP request, not pinned at sess
 spawn. Revocation + policy changes take effect on the next call. Tests.
 *Risk: medium — touches the ContextVar plumbing; smoke script + targeted tests are
 the gate.*
+**Delivered (#30):** the middleware ContextVar alone can't reach handlers (they
+run in the session's background task), so the per-request identity is bridged
+into that task via a mutable per-session `SessionIdentity` slot.
 
 **PR 5.9 — Cancellable installs; config CAS updates.**
 `anyio.to_thread.run_sync(..., cancellable=True)` + terminate child process on
@@ -312,7 +315,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#29](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#30](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -345,6 +348,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.5 `_proxy.*` params + schema-aware peel + mixed caps (+10 tests) | `fix/pagination-collisions` (main) [#27] | ✅ CI green; merged `3e96f08` |
 | 5.6 Degraded-upstream + truncation surfacing (+6 tests) | `fix/discovery-honesty` (main) [#28] | ✅ CI green; merged `7fb5357` |
 | 5.7 Per-session instructions; no `Server.instructions` mutation (+4 tests) | `fix/per-client-instructions` (main) [#29] | ✅ CI green; merged `61a2142` |
+| 5.8 Per-request client identity on stateful sessions (+5 tests) | `fix/request-scoped-identity` (main) [#30] | ✅ CI green; merged `bc9a75e` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -365,5 +369,10 @@ Notes for later PRs (learned while writing the harness/tests):
   call time, and the session manager calls it **while handling the initialize HTTP
   request** — that is what makes 5.7's per-request-scoped options factory safe.
 - `ToolCallStatsStore`/`Settings` take `pathlib.Path` (not `str`) for `data_dir`.
+- Stateful `/mcp` runs the whole session loop (all handlers) in one background
+  task spawned at `initialize`; its ContextVars freeze at spawn, so middleware
+  per-request values never reach an existing session's handlers. PR 5.8 bridges
+  this with the `live_mcp_tracker.SessionIdentity` slot (handlers use
+  `resolve_current_api_client()`; stateless/stdio keep the plain ContextVar).
 
-Next: PR 5.8 (re-resolve client identity per request instead of pinning at session init). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 5.9 (cancellable pip/npm installs + `ServerConfigStore.update_fields` CAS). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
