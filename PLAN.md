@@ -277,6 +277,11 @@ include server/upstream-controlled data (tool lists, server rows, env keys, live
 view, client/domain lists). Keep static strings as innerHTML where provably static.
 Tests: none in-repo today; manual checklist in PR body + smoke.
 *Risk: low, mechanical.*
+**Delivered (#34):** `esc()` in both pages; all 17 dynamic `innerHTML`
+assignments escaped (the real XSS vector: tool-checklist rows rendering
+upstream-chosen tool names). Static-analysis guard `test_admin_ui_escaping.py`
+(mask literals → every `+`-concat innerHTML needs `esc()`; bans
+`insertAdjacentHTML`/`outerHTML`/`document.write`) fails CI on regressions.
 
 **PR 7.2 — `innerHTML` cleanup (part 2: messages/errors) + CSP.**
 Convert remaining error/message sinks; ship a CSP header on `/admin/*`
@@ -326,7 +331,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#33](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#34](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -363,13 +368,14 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.9 Cancellable installs + `update_fields` CAS (+10 tests) | `fix/cancellable-installs` (main) [#31] | ✅ CI green; merged `48297e6` |
 | 6.1 mtime parse cache in config stores (+12 tests) | `perf/mtime-read-cache` (main) [#32] | ✅ CI green; merged `beeede6` |
 | 6.2 Tool-list TTL cache + concurrent discovery (+12 tests) | `perf/tool-list-cache` (main) [#33] | ✅ CI green; merged `1a8e2c0` |
+| 7.1 Admin UI: escape all dynamic innerHTML (+3 guard tests) | `fix/admin-ui-escape` (main) [#34] | ✅ CI green; merged `749d94b` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
 Phase 2 is done (PRs 2.1–2.4). Phase 3 is done (PRs 3.1–3.3). Phase 4 is done
 (4.1–4.5, 4.6a, 4.7a live; 4.6b/4.7b flips deferred, see D4). Phase 5 is done
 (5.1–5.9 live; the 5.2b flag flip is deferred, see D4). Phase 6 (performance)
-is done (6.1, 6.2).
+is done (6.1, 6.2). Phase 7 (admin UI hardening) is in progress: 7.1 live, 7.2 next.
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -404,4 +410,4 @@ Notes for later PRs (learned while writing the harness/tests):
   `build_proxy_mcp_server(..., tool_list_cache=...)` controls caching
   (default comes from `settings.tool_list_cache_ttl_s`).
 
-Next: PR 7.1 (admin UI: escape helper replacing `innerHTML` sinks). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 7.2 (remaining `innerHTML` sweep + CSP on `/admin/*`). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
