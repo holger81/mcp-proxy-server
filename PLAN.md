@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#35](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#36](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -377,14 +377,15 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 6.2 Tool-list TTL cache + concurrent discovery (+12 tests) | `perf/tool-list-cache` (main) [#33] | ✅ CI green; merged `1a8e2c0` |
 | 7.1 Admin UI: escape all dynamic innerHTML (+3 guard tests) | `fix/admin-ui-escape` (main) [#34] | ✅ CI green; merged `749d94b` |
 | 7.2 CSP + hardening headers on /admin/*, external page scripts (+6 tests) | `fix/admin-csp` (main) [#35] | ✅ CI green; merged `7ee9e73` |
+| Coordinated release: D4 flips 4.6b + 4.7b + 5.2b (warn-tests → flip/enforce tests) | `release/coordinated-flips` (main) [#36] | ✅ CI green incl. smoke; merged `b7534e8`; live deploy verified via Portainer (new image up, /admin CSP headers live) |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
 Phase 2 is done (PRs 2.1–2.4). Phase 3 is done (PRs 3.1–3.3). Phase 4 is done
-(4.1–4.5, 4.6a, 4.7a live; 4.6b/4.7b flips deferred, see D4). Phase 5 is done
-(5.1–5.9 live; the 5.2b flag flip is deferred, see D4). Phase 6 (performance)
-is done (6.1, 6.2). Phase 7 (admin UI hardening) is done (7.1, 7.2). All
-planned PRs are live; only the deferred (b)-flips remain (see D4).
+(4.1–4.5, 4.6a/4.6b, 4.7a/4.7b live). Phase 5 is done
+(5.1–5.9 live, including the 5.2b flip). Phase 6 (performance)
+is done (6.1, 6.2). Phase 7 (admin UI hardening) is done (7.1, 7.2). The
+coordinated D4 release (#36) is live: **every planned PR is merged and deployed**.
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -419,4 +420,4 @@ Notes for later PRs (learned while writing the harness/tests):
   `build_proxy_mcp_server(..., tool_list_cache=...)` controls caching
   (default comes from `settings.tool_list_cache_ttl_s`).
 
-Next: the **coordinated release** (D4) — 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip). All three warn-first PRs are live; the (b)-flips are the only planned work left.
+Done — the coordinated release (D4 flips) is live (#36). Nothing remains on the plan; see "Explicitly deferred" for the parked backlog.
