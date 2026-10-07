@@ -240,6 +240,10 @@ into that task via a mutable per-session `SessionIdentity` slot.
 cancellation in pip/npm paths. `ServerConfigStore.update_fields(id, fn)` doing
 read-modify-write under the lock; use in `setServerEnabled` / `upgradeStdioServer`.
 Tests. *Risk: low.*
+**Delivered (#31):** `cancellable_proc.run_process` (own-session child + group
+kill on event → `InstallCancelled`); `proxy_mcp._install_in_thread` uses
+`abandon_on_cancel=True` and signals the event; REST install endpoints keep the
+old synchronous path.
 
 ## Phase 6 — Proxy: performance
 
@@ -315,7 +319,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#30](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#31](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -349,10 +353,14 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.6 Degraded-upstream + truncation surfacing (+6 tests) | `fix/discovery-honesty` (main) [#28] | ✅ CI green; merged `7fb5357` |
 | 5.7 Per-session instructions; no `Server.instructions` mutation (+4 tests) | `fix/per-client-instructions` (main) [#29] | ✅ CI green; merged `61a2142` |
 | 5.8 Per-request client identity on stateful sessions (+5 tests) | `fix/request-scoped-identity` (main) [#30] | ✅ CI green; merged `bc9a75e` |
+| 5.9 Cancellable installs + `update_fields` CAS (+10 tests) | `fix/cancellable-installs` (main) [#31] | ✅ CI green; merged `48297e6` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
-Phase 2 is done (PRs 2.1–2.4). Phase 3 (news-server security) is in progress.
+Phase 2 is done (PRs 2.1–2.4). Phase 3 is done (PRs 3.1–3.3). Phase 4 is done
+(4.1–4.5, 4.6a, 4.7a live; 4.6b/4.7b flips deferred, see D4). Phase 5 is done
+(5.1–5.9 live; the 5.2b flag flip is deferred, see D4). Phase 6 (performance)
+is next.
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -374,5 +382,9 @@ Notes for later PRs (learned while writing the harness/tests):
   per-request values never reach an existing session's handlers. PR 5.8 bridges
   this with the `live_mcp_tracker.SessionIdentity` slot (handlers use
   `resolve_current_api_client()`; stateless/stdio keep the plain ContextVar).
+- Process-kill tests: an orphaned grandchild is reparented to this container's
+  PID 1 (`opencode serve`), which does **not** reap foreign orphans — a killed
+  zombie keeps answering `kill(pid, 0)`. Treat `/proc/<pid>/stat` state `Z` as
+  dead (see `_pid_alive` in `tests/test_cancellable_installs_and_cas.py`).
 
-Next: PR 5.9 (cancellable pip/npm installs + `ServerConfigStore.update_fields` CAS). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 6.1 (async/mtime-cached file reads). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
