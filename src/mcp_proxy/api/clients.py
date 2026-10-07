@@ -34,7 +34,9 @@ async def tool_catalog(request: Request) -> dict:
     """All tools (meta + upstream) for per-client enable/disable UI."""
     store = request.app.state.server_store
     settings: Settings = request.app.state.settings
-    tools = await build_tool_catalog_for_admin(store, settings)
+    tools = await build_tool_catalog_for_admin(
+        store, settings, request.app.state.upstream_tool_cache
+    )
     return {
         "tools": tools,
         "global_llm_limits": _llm_limits_excerpt(settings),

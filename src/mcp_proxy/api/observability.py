@@ -28,6 +28,7 @@ async def mcp_llm_preview(request: Request) -> dict:
         domain_store,
         request.app.state.settings,
         stats_store=request.app.state.tool_call_stats_store,
+        tool_cache=request.app.state.upstream_tool_cache,
     )
 
 

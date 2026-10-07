@@ -43,6 +43,7 @@ from mcp_proxy.client_policy import (
 from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import HOT_TOOL_SLOTS, ToolCallStatsStore
 from mcp_proxy.tool_response_cache import ToolResponseCache
+from mcp_proxy.upstream_tool_cache import UpstreamToolListCache
 from mcp_proxy.tool_response_pagination import (
     apply_upstream_error_semantics,
     paginate_call_tool_response,
@@ -386,6 +387,7 @@ async def _lookup_tool_row(
     store: ServerConfigStore,
     settings: Settings,
     composite: str,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> tuple[ToolRowOutcome, dict[str, Any] | None]:
     """Resolve one discovery row for a composite tool name (for hot-tool list enrichment)."""
     try:
@@ -402,7 +404,7 @@ async def _lookup_tool_row(
         return ToolRowOutcome.MISSING, None
     try:
         with anyio.fail_after(settings.upstream_timeout_s):
-            tools = await _list_upstream_tools(upstream, settings)
+            tools = await _list_upstream_tools_cached(upstream, settings, tool_cache)
     except Exception:
         log.debug("lookup_tool_row: failed for %s", composite, exc_info=True)
         return ToolRowOutcome.ERROR, None
@@ -440,6 +442,7 @@ async def _as_hot_call_tool_args(
     store: ServerConfigStore,
     settings: Settings,
     stats_store: ToolCallStatsStore,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> tuple[str, dict[str, Any], str | None, frozenset[str]]:
     """If ``name`` is a verified popular shortcut, rewrite to callTool.
 
@@ -453,7 +456,7 @@ async def _as_hot_call_tool_args(
     hot_key = _match_hot_stats_key(name, stats_store, settings)
     if hot_key is None:
         return name, args, None, no_declared
-    outcome, row = await _lookup_tool_row(store, settings, hot_key)
+    outcome, row = await _lookup_tool_row(store, settings, hot_key, tool_cache)
     if outcome is not ToolRowOutcome.FOUND:
         # PR 5.4: only prune when the tool is verifiably gone; a flaky or
         # timed-out upstream must not wipe the popular-tool shortcut.
@@ -496,6 +499,7 @@ async def _verified_hot_tools(
     disabled: frozenset[str],
     *,
     slots: int = HOT_TOOL_SLOTS,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> list[mcp_types.Tool]:
     """Session-level popular shortcuts that still exist upstream (prune stale stats)."""
     out: list[mcp_types.Tool] = []
@@ -505,7 +509,7 @@ async def _verified_hot_tools(
         wire = _composite_tool_list_name(composite, settings)
         if is_tool_disabled(composite, disabled) or is_tool_disabled(wire, disabled):
             continue
-        outcome, row = await _lookup_tool_row(store, settings, composite)
+        outcome, row = await _lookup_tool_row(store, settings, composite, tool_cache)
         if outcome is not ToolRowOutcome.FOUND:
             # PR 5.4: prune only on a verified miss, never on transient errors.
             if outcome is ToolRowOutcome.MISSING and stats_store.remove(composite):
@@ -523,6 +527,7 @@ async def _build_session_tool_list(
     domain_ids: list[str],
     settings: Settings,
     stats_store: ToolCallStatsStore,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> list[mcp_types.Tool]:
     eff = _effective_settings(settings)
     disabled = _disabled_for_request()
@@ -530,7 +535,11 @@ async def _build_session_tool_list(
     for t in build_meta_tool_list(domain_ids, eff):
         if not is_tool_disabled(t.name, disabled):
             tools.append(t)
-    tools.extend(await _verified_hot_tools(store, eff, stats_store, disabled))
+    tools.extend(
+        await _verified_hot_tools(
+            store, eff, stats_store, disabled, tool_cache=tool_cache
+        )
+    )
     return tools
 
 
@@ -547,6 +556,28 @@ async def _list_upstream_tools(
                 await session.initialize()
                 res = await session.list_tools()
                 return list(res.tools)
+
+
+async def _list_upstream_tools_cached(
+    server: UpstreamServer,
+    settings: Settings,
+    tool_cache: UpstreamToolListCache | None,
+) -> list[mcp_types.Tool]:
+    """PR 6.2: TTL-cached discovery per upstream (key includes the config
+    fingerprint, so config edits self-invalidate); fetch errors drop the
+    entry so a recovered upstream is queried again on the next discovery."""
+    if tool_cache is None:
+        return await _list_upstream_tools(server, settings)
+    hit = tool_cache.get(server)
+    if hit is not None:
+        return hit
+    try:
+        tools = await _list_upstream_tools(server, settings)
+    except Exception:
+        tool_cache.invalidate(server.id)
+        raise
+    tool_cache.put(server, tools)
+    return tools
 
 
 def _tool_defs_for_server(
@@ -685,33 +716,61 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
 
 
 async def _collect_all_tool_defs(
-    store: ServerConfigStore, settings: Settings, domain_id: str | None
+    store: ServerConfigStore,
+    settings: Settings,
+    domain_id: str | None,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """All tool rows for a domain plus *degraded* upstreams that failed.
 
     PR 5.6: a failed upstream used to vanish silently from discovery results;
     callers now surface ``[{"serverId": …, "error": …}]`` so an LLM knows the
     tool list may be incomplete instead of hallucinating "tool does not exist".
+
+    PR 6.2: enabled upstreams are queried **concurrently** under one shared
+    deadline (``upstream_timeout_s`` for the whole fan-out; previously each
+    sequential connect consumed its own timeout budget) and through the
+    per-server tool-list TTL cache.
     """
     combined: list[dict[str, Any]] = []
     degraded: list[dict[str, str]] = []
     if domain_id in (None, _ADMIN_DOMAIN_ID):
         combined.extend(_admin_tool_rows(settings))
-    for s in store.list_servers():
-        if not s.enabled:
-            continue
-        if domain_id is not None and s.domain != domain_id:
-            continue
+    servers = [
+        s
+        for s in store.list_servers()
+        if s.enabled and (domain_id is None or s.domain == domain_id)
+    ]
+    fetched: dict[str, list[mcp_types.Tool]] = {}
+    errors: dict[str, str] = {}
+
+    async def _one(s: UpstreamServer) -> None:
         try:
-            tools = await _list_upstream_tools(s, settings)
-            combined.extend(_tool_defs_for_server(s, tools, settings))
+            fetched[s.id] = await _list_upstream_tools_cached(s, settings, tool_cache)
         except TimeoutError:
             log.warning("collect tools: timeout for upstream %s", s.id)
-            degraded.append({"serverId": s.id, "error": "timeout"})
+            errors[s.id] = "timeout"
         except Exception as e:
             detail = upstream_error_detail(e)
-            log.exception("collect tools: skip upstream %s (%s)", s.id, detail)
-            degraded.append({"serverId": s.id, "error": detail[:200]})
+            log.warning("collect tools: skip upstream %s (%s)", s.id, detail)
+            errors[s.id] = detail[:200]
+
+    if servers:
+        with anyio.move_on_after(settings.upstream_timeout_s) as deadline:
+            async with anyio.create_task_group() as tg:
+                for s in servers:
+                    tg.start_soon(_one, s)
+        if deadline.cancelled_caught:
+            log.warning(
+                "collect tools: shared deadline (%.0fs) hit; %d upstream(s) unfinished",
+                settings.upstream_timeout_s,
+                len(servers) - len(fetched) - len(errors),
+            )
+    for s in servers:  # config order preserved (was sequential before 6.2)
+        if s.id in fetched:
+            combined.extend(_tool_defs_for_server(s, fetched[s.id], settings))
+        else:
+            degraded.append({"serverId": s.id, "error": errors.get(s.id, "timeout")})
     disabled = _disabled_for_request()
     if disabled:
         combined = [
@@ -725,6 +784,7 @@ async def _collect_all_tool_defs(
 async def build_tool_catalog_for_admin(
     store: ServerConfigStore,
     settings: Settings,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> list[dict[str, Any]]:
     """All proxy tools for admin per-client enable/disable UI (ignores client policy)."""
     meta_desc = {
@@ -743,7 +803,7 @@ async def build_tool_catalog_for_admin(
         }
         for meta in sorted(META_TOOL_NAMES)
     ]
-    defs, _degraded = await _collect_all_tool_defs(store, settings, None)
+    defs, _degraded = await _collect_all_tool_defs(store, settings, None, tool_cache)
     for row in defs:
         sid = str(row.get("serverId", ""))
         catalog.append(
@@ -1056,6 +1116,7 @@ async def get_llm_preview_snapshot(
     domain_store: DomainStore,
     settings: Settings | None = None,
     stats_store: ToolCallStatsStore | None = None,
+    tool_cache: UpstreamToolListCache | None = None,
 ) -> dict[str, Any]:
     """Serializable view of what MCP clients receive for tools + instructions (admin preview)."""
     cfg = settings or Settings()
@@ -1065,7 +1126,9 @@ async def get_llm_preview_snapshot(
     ids.add(_ADMIN_DOMAIN_ID)
     domain_ids = sorted(ids)
     if stats_store is not None:
-        tools = await _build_session_tool_list(store, domain_ids, cfg, stats_store)
+        tools = await _build_session_tool_list(
+            store, domain_ids, cfg, stats_store, tool_cache
+        )
     else:
         tools = build_meta_tool_list(domain_ids, cfg)
     tool_dicts = [
@@ -1116,8 +1179,14 @@ def build_proxy_mcp_server(
     *,
     live_tracker: LiveMcpTracker | None = None,
     tool_response_cache: ToolResponseCache | None = None,
+    tool_list_cache: UpstreamToolListCache | None = None,
 ) -> Server:
     response_cache = tool_response_cache or ToolResponseCache()
+    # PR 6.2: shared upstream tool-list TTL cache (app wires one from
+    # settings so the admin API shares it with the MCP server).
+    tool_cache = tool_list_cache or UpstreamToolListCache(
+        ttl_s=settings.tool_list_cache_ttl_s
+    )
     server = Server(
         "mcp-proxy",
         version="0.1.0",
@@ -1134,7 +1203,7 @@ def build_proxy_mcp_server(
     @server.list_tools()
     async def list_tools() -> list[mcp_types.Tool]:
         return await _build_session_tool_list(
-            store, _domain_ids(), settings, stats_store
+            store, _domain_ids(), settings, stats_store, tool_cache
         )
 
     @server.list_resources()
@@ -1177,7 +1246,7 @@ def build_proxy_mcp_server(
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
         name, args, hot_wire, _declared = await _as_hot_call_tool_args(
-            name, args, store, settings, stats_store
+            name, args, store, settings, stats_store, tool_cache
         )
         display_tool = hot_wire or (
             str(args.get("toolName") or "callTool")
@@ -1201,7 +1270,7 @@ def build_proxy_mcp_server(
         disabled = _disabled_for_request()
         args = arguments or {}
         name, args, hot_wire, declared_params = await _as_hot_call_tool_args(
-            name, args, store, settings, stats_store
+            name, args, store, settings, stats_store, tool_cache
         )
         if hot_wire is not None:
             assert_tool_allowed(hot_wire, disabled)
@@ -1249,7 +1318,7 @@ def build_proxy_mcp_server(
                     )
                 )
             offset, page_limit = _parse_domain_pagination(args, eff)
-            defs, degraded = await _collect_all_tool_defs(store, settings, dom)
+            defs, degraded = await _collect_all_tool_defs(store, settings, dom, tool_cache)
             if list_all:
                 ordered = sorted(defs, key=lambda r: str(r.get("toolName", "")).lower())
                 total = len(ordered)
@@ -1314,7 +1383,9 @@ def build_proxy_mcp_server(
                         )
                     )
 
-            all_defs, degraded = await _collect_all_tool_defs(store, settings, dom_filter)
+            all_defs, degraded = await _collect_all_tool_defs(
+                store, settings, dom_filter, tool_cache
+            )
             matches = [d for d in all_defs if _tool_row_matches_query(d, q)]
             matches.sort(key=lambda m: _rank_match_key(m, q))
             total = len(matches)
@@ -1714,6 +1785,8 @@ def build_proxy_mcp_server(
                 store.add(server)
             except ValueError:
                 store.update(sid, server)
+            # 6.2: package contents changed even if the command string did not.
+            tool_cache.invalidate(sid)
             set_stdio_meta(settings.data_dir, sid, ecosystem, package_spec)
             payload = {
                 "ok": True,
@@ -1850,6 +1923,7 @@ def build_proxy_mcp_server(
                 store.add(server)
             except ValueError:
                 store.update(sid, server)
+            tool_cache.invalidate(sid)  # 6.2
             payload = {
                 "ok": True,
                 "registered": True,
@@ -1957,6 +2031,7 @@ def build_proxy_mcp_server(
                         )
                     )
             set_stdio_meta(settings.data_dir, sid, ecosystem, upgrade_spec)
+            tool_cache.invalidate(sid)  # 6.2
             payload = {
                 "ok": True,
                 "upgraded": True,
@@ -1989,6 +2064,7 @@ def build_proxy_mcp_server(
                     )
                 )
             remove_stdio_meta(settings.data_dir, sid)
+            tool_cache.invalidate(sid)  # 6.2
             payload = {"ok": True, "removed": True, "serverId": sid}
             return [
                 mcp_types.TextContent(

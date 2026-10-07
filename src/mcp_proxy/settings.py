@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     # Upstream execution timeout (seconds) for callTool and admin inspect operations.
     # Some upstream tools (e.g. IMAP move/copy) can take a while on large mailboxes.
     upstream_timeout_s: float = Field(default=300.0, ge=5.0, le=3600.0)
+    # PLAN 6.2: per-upstream tools/list TTL cache (0 disables). Config edits
+    # self-invalidate (key includes the config fingerprint); upstream tool
+    # *content* changes are picked up within this TTL.
+    tool_list_cache_ttl_s: float = Field(default=30.0, ge=0.0, le=86400.0)
     # When true (default), composite tool names use only [a-zA-Z0-9_] so strict MCP clients
     # (e.g. Cursor) accept tools/list. Legacy `server/tool` callTool names still work.
     safe_tool_names: Annotated[bool, BeforeValidator(_env_bool)] = True

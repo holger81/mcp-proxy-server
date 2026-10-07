@@ -26,6 +26,7 @@ from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.news_digest_refresher import NewsDigestRefresher
 from mcp_proxy.proxy_mcp import build_proxy_mcp_server, session_initialization_options
+from mcp_proxy.upstream_tool_cache import UpstreamToolListCache
 from mcp_proxy.live_streamable_http_session_manager import (
     LiveBindingStreamableHTTPSessionManager,
 )
@@ -184,6 +185,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tool_response_cache = ToolResponseCache()
     app.state.live_mcp_tracker = LiveMcpTracker()
     app.state.login_rate_limiter = LoginRateLimiter()
+    # PLAN 6.2: one shared upstream tool-list TTL cache for MCP + admin API.
+    app.state.upstream_tool_cache = UpstreamToolListCache(
+        ttl_s=settings.tool_list_cache_ttl_s
+    )
 
     if StreamableHTTPSessionManager is None:
         raise RuntimeError(
@@ -196,6 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.tool_call_stats_store,
         live_tracker=app.state.live_mcp_tracker,
         tool_response_cache=app.state.tool_response_cache,
+        tool_list_cache=app.state.upstream_tool_cache,
     )
     app.state.mcp_session_manager = LiveBindingStreamableHTTPSessionManager(
         mcp_sdk_server,

@@ -366,6 +366,7 @@ async def register_stdio_package(
         store.add(server)
     except ValueError:
         store.update(body.server_id, server)
+    request.app.state.upstream_tool_cache.invalidate(body.server_id)  # 6.2
     set_stdio_meta(
         request.app.state.settings.data_dir,
         body.server_id,
@@ -470,6 +471,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
     else:
         server.command = argv
     store.update(server_id, server)
+    request.app.state.upstream_tool_cache.invalidate(server_id)  # 6.2
     set_stdio_meta(
         request.app.state.settings.data_dir,
         server_id,
@@ -497,6 +499,7 @@ async def delete_server(request: Request, server_id: str) -> Response:
     if not store.remove(server_id):
         raise HTTPException(status_code=404, detail="server not found")
     remove_stdio_meta(request.app.state.settings.data_dir, server_id)
+    request.app.state.upstream_tool_cache.invalidate(server_id)  # 6.2
     return Response(status_code=204)
 
 
