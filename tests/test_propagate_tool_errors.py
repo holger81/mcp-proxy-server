@@ -1,14 +1,12 @@
-"""PR 5.2a (D4 warn-first): upstream isError/structuredContent propagation.
+"""PR 5.2a/5.2b (D4): upstream isError/structuredContent propagation.
 
-Default (flag off) keeps today's behavior: content blocks only, upstream
-tool errors arrive as successful text. With
-``MCP_PROXY_PROPAGATE_TOOL_ERRORS=true`` the proxy returns a full
-``CallToolResult`` so the MCP SDK passes the semantics through verbatim.
+``MCP_PROXY_PROPAGATE_TOOL_ERRORS=false`` keeps the legacy behavior: content
+blocks only, upstream tool errors arrive as successful text. Since 5.2b the
+flag defaults to ``true``: the proxy returns a full ``CallToolResult`` so the
+MCP SDK passes the semantics through verbatim.
 """
 
 from __future__ import annotations
-
-import logging
 
 from mcp import types as mcp_types
 
@@ -62,23 +60,19 @@ def test_flag_on_forwards_structured_content_untouched() -> None:
     assert out.structuredContent == structured
 
 
-# -- startup warning -----------------------------------------------------------
+# -- defaults (5.2b flip) --------------------------------------------------------
 
 
-def test_warns_when_unset(monkeypatch, caplog) -> None:
+def test_default_is_on_after_flip(monkeypatch) -> None:
     monkeypatch.delenv("MCP_PROXY_PROPAGATE_TOOL_ERRORS", raising=False)
-    settings = Settings()
-    assert settings.propagate_tool_errors is False  # default unchanged (5.2a)
-    with caplog.at_level(logging.WARNING, logger="mcp_proxy.settings"):
-        settings.log_error_policy()
-    msgs = [r.getMessage() for r in caplog.records]
-    assert any("MCP_PROXY_PROPAGATE_TOOL_ERRORS" in m for m in msgs)
+    assert Settings().propagate_tool_errors is True
 
 
-def test_silent_when_set(monkeypatch, caplog) -> None:
-    monkeypatch.setenv("MCP_PROXY_PROPAGATE_TOOL_ERRORS", "true")
+def test_flag_false_still_hides_errors(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_PROXY_PROPAGATE_TOOL_ERRORS", "false")
     settings = Settings()
-    assert settings.propagate_tool_errors is True
-    with caplog.at_level(logging.WARNING, logger="mcp_proxy.settings"):
-        settings.log_error_policy()
-    assert [r for r in caplog.records if "PROPAGATE" in r.getMessage()] == []
+    assert settings.propagate_tool_errors is False
+    out = apply_upstream_error_semantics(
+        _result(is_error=True, structured={"a": 1}), list(BLOCKS), settings=settings
+    )
+    assert out == BLOCKS  # opt-out keeps the legacy text-only behavior

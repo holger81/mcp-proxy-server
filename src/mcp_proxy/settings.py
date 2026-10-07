@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 from typing import Annotated, Self
 
@@ -48,15 +47,16 @@ class Settings(BaseSettings):
     portainer_mcp_install_script: Path = Path(
         "/app/docker/install-portainer-mcp-release.sh"
     )
-    allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = True
-    allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = True
-    # PLAN 4.7b: next release will refuse to start when no admin password is
-    # set AND the bind host is non-loopback, unless this flag is true.
+    # PLAN 4.6b: installs are opt-in now (default flipped from true).
+    allow_pypi_install: Annotated[bool, BeforeValidator(_env_bool)] = False
+    allow_npm_install: Annotated[bool, BeforeValidator(_env_bool)] = False
+    # PLAN 4.7b: startup is refused when no admin password is set AND the bind
+    # host is non-loopback, unless this flag is true (deliberate open deployment).
     allow_no_auth: Annotated[bool, BeforeValidator(_env_bool)] = False
-    # PLAN 5.2a: when true, upstream callTool results keep their isError flag
-    # and structuredContent. Default false (today's behavior) this release;
-    # 5.2b flips the default.
-    propagate_tool_errors: Annotated[bool, BeforeValidator(_env_bool)] = False
+    # PLAN 5.2b: upstream callTool results keep their isError flag and
+    # structuredContent (default flipped from false). Set false to hide
+    # upstream errors as plain text again.
+    propagate_tool_errors: Annotated[bool, BeforeValidator(_env_bool)] = True
     static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""
@@ -182,70 +182,37 @@ class Settings(BaseSettings):
                 "or MCP_PROXY_ADMIN_PASSWORD_FILE / MCP_PROXY_SESSION_SECRET_FILE for Docker secrets."
             )
 
-    def log_install_policy(self) -> None:
-        """PLAN 4.6a (D4 warn-first): announce the upcoming default flip.
+    def enforce_bind_policy(self) -> None:
+        """PLAN 4.7b (D4 flip): refuse to start an open, unauthenticated bind.
 
-        Behavior is unchanged here — the defaults stay ``True`` this release.
-        Next release flips the default to ``false``; set the vars explicitly
-        now to be unaffected.
-        """
-        log = logging.getLogger("mcp_proxy.settings")
-        for env_name in ("MCP_PROXY_ALLOW_PYPI_INSTALL", "MCP_PROXY_ALLOW_NPM_INSTALL"):
-            if env_name not in os.environ:
-                log.warning(
-                    "%s is not set: automatic package installs currently default to "
-                    "enabled, but the default will change to disabled in the next "
-                    "release. Set %s=true to keep the current behavior or =false to "
-                    "opt in early.",
-                    env_name,
-                    env_name,
-                )
-
-    def log_error_policy(self) -> None:
-        """PLAN 5.2a (D4 warn-first): announce upstream error propagation.
-
-        Behavior unchanged this release — upstream tool errors still arrive
-        as successful text. 5.2b flips the default to propagate.
-        """
-        log = logging.getLogger("mcp_proxy.settings")
-        if "MCP_PROXY_PROPAGATE_TOOL_ERRORS" in os.environ:
-            return
-        log.warning(
-            "MCP_PROXY_PROPAGATE_TOOL_ERRORS is not set: upstream tool errors "
-            "(isError) currently reach clients as normal text, but from the "
-            "next release they will propagate as errors by default (and "
-            "structuredContent will be forwarded). Set "
-            "MCP_PROXY_PROPAGATE_TOOL_ERRORS=false to keep hiding errors, or "
-            "=true to opt in early."
-        )
-
-    def log_bind_policy(self) -> None:
-        """PLAN 4.7a (D4 warn-first): loud warning for open unauthenticated bind.
-
-        Behavior unchanged this release. Next release refuses to start in
-        this state unless ``MCP_PROXY_ALLOW_NO_AUTH=true`` (4.7b).
+        4.7a only warned; this is the announced refusal. Escape hatches are
+        the same ones the warning named: set an admin password, bind to
+        loopback, or ``MCP_PROXY_ALLOW_NO_AUTH=true`` for a deliberate open
+        deployment.
         """
         log = logging.getLogger("mcp_proxy.settings")
         if self.auth_enabled or self.host in _LOOPBACK_HOSTS:
             return
         if self.allow_no_auth:
-            log.info(
-                "No admin password and bind host %s, but MCP_PROXY_ALLOW_NO_AUTH=true; "
-                "from the next release this flag keeps the proxy starting without auth.",
+            log.warning(
+                "MCP_PROXY_ALLOW_NO_AUTH=true: starting WITHOUT authentication on %s. "
+                "Anyone who can reach this address can use and administer all "
+                "proxied MCP servers.",
                 self.host,
             )
             return
         bar = "!" * 78
-        log.warning(
-            "\n%s\n"
-            "  INSECURE BIND: no admin password is set and the proxy listens on %s.\n"
+        raise ValueError(
+            "\n"
+            f"{bar}\n"
+            "  INSECURE BIND: no admin password is set and the proxy listens on "
+            f"{self.host}.\n"
             "  Anyone who can reach this address can use and administer all proxied\n"
-            "  MCP servers.\n"
-            "  Next release, startup will be REFUSED in this state unless you set\n"
-            "  MCP_PROXY_ADMIN_PASSWORD, or MCP_PROXY_ALLOW_NO_AUTH=true (deliberate\n"
-            "  open deployment), or bind to a loopback host (127.0.0.1).\n"
-            "%s",
-            bar,
-            self.host,
-            bar,
+            "  MCP servers. Startup is refused in this state.\n"
+            "  Fix with ONE of:\n"
+            "    MCP_PROXY_ADMIN_PASSWORD (+ MCP_PROXY_SESSION_SECRET), or the *_FILE\n"
+            "    variants for Docker secrets,\n"
+            "    MCP_PROXY_ALLOW_NO_AUTH=true  (deliberate open deployment),\n"
+            "    MCP_PROXY_HOST=127.0.0.1      (loopback only).\n"
+            f"{bar}"
         )

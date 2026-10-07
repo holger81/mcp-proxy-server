@@ -22,8 +22,8 @@ services:
     environment:
       MCP_PROXY_DATA_DIR: /data
       MCP_PROXY_STATIC_ROOT: /app/static
-      # Package installs from the admin UI / proxy tools. Currently default to enabled;
-      # the default becomes disabled in the next release — set explicitly to pin behavior.
+      # Package installs from the admin UI / proxy tools are OPT-IN (default
+      # flipped to disabled in the 2026-10 release). Set true to allow installs.
       # MCP_PROXY_ALLOW_PYPI_INSTALL: "true"
       # MCP_PROXY_ALLOW_NPM_INSTALL: "true"
       # News digest caches under /data/mcp-news/cache (refreshed by proxy, not the short-lived stdio child).
@@ -46,6 +46,9 @@ services:
       MCP_PROXY_SECURE_COOKIES: ${MCP_PROXY_SECURE_COOKIES:-false}
       MCP_PROXY_ADMIN_PASSWORD_FILE: ${MCP_PROXY_ADMIN_PASSWORD_FILE:-}
       MCP_PROXY_SESSION_SECRET_FILE: ${MCP_PROXY_SESSION_SECRET_FILE:-}
+      # Startup is REFUSED when no password is set and the bind is non-loopback.
+      # Set true only for a deliberate open deployment (trusted network).
+      MCP_PROXY_ALLOW_NO_AUTH: ${MCP_PROXY_ALLOW_NO_AUTH:-false}
       # Optional in .env: TZ=America/Denver (IANA). Uses zoneinfo for log timestamps; combine with localtime mount above.
       TZ: ${TZ:-}
       # LLM context caps — override in Portainer stack env or stack.env (0 = unlimited for *_MAX_CHARS).
