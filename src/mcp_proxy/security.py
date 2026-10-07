@@ -197,7 +197,13 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
         if path.startswith("/admin"):
-            if path.rstrip("/") == "/admin/login.html" or path.endswith("/login.html"):
+            # Assets the *login page itself* needs, served unauthenticated.
+            # Since PR 7.2 the page scripts are external files: redirecting a
+            # script fetch to login.html hands the browser HTML for a <script
+            # src>, which its MIME/CSP checks refuse to execute — the login
+            # form dies with no server-side error (login.js regression).
+            name = path.rsplit("/", 1)[-1]
+            if name in ("login.html", "login.js"):
                 return await call_next(request)
             if request.session.get(SESSION_ADMIN_KEY):
                 return await call_next(request)
