@@ -252,6 +252,9 @@ old synchronous path.
 mtime; or `anyio.to_thread` wrappers where freshness matters. Benchmark in PR body
 (req/s before/after on the smoke instance). *Risk: low; correctness rests on mtime
 invalidation + tests.*
+**Delivered (#32):** `json_file_cache.MtimeJsonCache` (stat-signature keyed);
+stores invalidate on own writes and deep-copy handed-out records; a corrupt
+file is never cached. `resolve_bearer` 238 µs → 9.2 µs (26×), writes unchanged.
 
 **PR 6.2 — Upstream tool-list cache + concurrent discovery.**
 Per-server TTL cache (`tool_list_cache_ttl_s`, default 30s; 0 disables) keyed by
@@ -319,7 +322,7 @@ Convert remaining error/message sinks; ship a CSP header on `/admin/*`
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#31](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#32](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -354,13 +357,14 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 5.7 Per-session instructions; no `Server.instructions` mutation (+4 tests) | `fix/per-client-instructions` (main) [#29] | ✅ CI green; merged `61a2142` |
 | 5.8 Per-request client identity on stateful sessions (+5 tests) | `fix/request-scoped-identity` (main) [#30] | ✅ CI green; merged `bc9a75e` |
 | 5.9 Cancellable installs + `update_fields` CAS (+10 tests) | `fix/cancellable-installs` (main) [#31] | ✅ CI green; merged `48297e6` |
+| 6.1 mtime parse cache in config stores (+12 tests) | `perf/mtime-read-cache` (main) [#32] | ✅ CI green; merged `beeede6` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
 Phase 2 is done (PRs 2.1–2.4). Phase 3 is done (PRs 3.1–3.3). Phase 4 is done
 (4.1–4.5, 4.6a, 4.7a live; 4.6b/4.7b flips deferred, see D4). Phase 5 is done
 (5.1–5.9 live; the 5.2b flag flip is deferred, see D4). Phase 6 (performance)
-is next.
+is in progress (6.1 done).
 
 Notes for later PRs (learned while writing the harness/tests):
 - respx matches routes in **registration order** — register specific routes before catch-alls.
@@ -387,4 +391,4 @@ Notes for later PRs (learned while writing the harness/tests):
   zombie keeps answering `kill(pid, 0)`. Treat `/proc/<pid>/stat` state `Z` as
   dead (see `_pid_alive` in `tests/test_cancellable_installs_and_cas.py`).
 
-Next: PR 6.1 (async/mtime-cached file reads). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
+Next: PR 6.2 (upstream tool-list cache + concurrent discovery). ⏳ Deferred to the **next coordinated release** (D4): 4.6b (flip install defaults), 4.7b (refuse start w/o auth), 5.2b (`isError` propagation flip) — warnings for all three are live now.
