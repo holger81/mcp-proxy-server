@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 import json
 
+from mcp_proxy.cancellable_proc import InstallCancelled, run_process
 from mcp_proxy.models import validate_slug_id
 
 # Scoped or unscoped package name, optional @version.
@@ -288,13 +289,9 @@ def _npm_run(
     args: list[str],
     *,
     timeout_s: int,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, str]:
-    proc = subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-    )
+    proc = run_process(args, timeout_s=timeout_s, cancel_event=cancel_event)
     parts: list[str] = []
     if proc.stdout:
         parts.append(proc.stdout)
@@ -410,7 +407,10 @@ class NpmInstallResult:
 
 
 def install_npm_prefix(
-    data_dir: Path, slug: str, package_spec: str
+    data_dir: Path,
+    slug: str,
+    package_spec: str,
+    cancel_event: threading.Event | None = None,
 ) -> NpmInstallResult:
     sid = validate_slug_id(slug)
     spec = validate_npm_package_spec(package_spec)
@@ -446,7 +446,7 @@ def install_npm_prefix(
         npm_args.append("--ignore-scripts")
     npm_args.append(spec)
 
-    code, log = _npm_run(npm_args, timeout_s=600)
+    code, log = _npm_run(npm_args, timeout_s=600, cancel_event=cancel_event)
     ok = code == 0
 
     build_prefix: Path | None = None
@@ -481,6 +481,7 @@ def install_npm_prefix(
                     str(build_prefix),
                 ],
                 timeout_s=900,
+                cancel_event=cancel_event,
             )
             if dep_log:
                 log += "\n" + dep_log
@@ -490,6 +491,7 @@ def install_npm_prefix(
                 build_code, build_log = _npm_run(
                     ["npm", "run", "build", "--prefix", str(build_prefix)],
                     timeout_s=900,
+                    cancel_event=cancel_event,
                 )
                 if build_log:
                     log += "\n" + build_log

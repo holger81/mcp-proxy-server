@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from mcp_proxy.models import ServerListFile, UpstreamServer
@@ -67,6 +68,32 @@ class ServerConfigStore:
                     doc.servers[i] = server
                     self._write_unlocked(doc)
                     return
+            raise KeyError(server_id)
+
+    def update_fields(
+        self, server_id: str, mutate: "Callable[[UpstreamServer], UpstreamServer]"
+    ) -> UpstreamServer:
+        """Atomic read-modify-write of one server (PR 5.9 CAS).
+
+        ``mutate`` receives the *current* server (freshly read under the lock)
+        and returns the modified copy. Because read + write happen while the
+        lock is held, two concurrent single-field updates (e.g. toggling
+        ``enabled`` vs rewriting ``command`` after an upgrade) can never
+        clobber each other the way a ``get()`` then ``update()`` would, where
+        an intervening write is silently overwritten (lost update).
+
+        Raises ``KeyError`` if the server id is missing.
+        """
+        with self._lock:
+            doc = self._read_raw()
+            for i, s in enumerate(doc.servers):
+                if s.id == server_id:
+                    updated = mutate(s)
+                    if updated.id != server_id:
+                        raise ValueError("mutate must not change the server id")
+                    doc.servers[i] = updated
+                    self._write_unlocked(doc)
+                    return updated
             raise KeyError(server_id)
 
     def _write_unlocked(self, doc: ServerListFile) -> None:

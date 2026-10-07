@@ -6,10 +6,12 @@ import enum
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any
+from functools import partial
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import anyio
@@ -78,6 +80,26 @@ def _disabled_for_request() -> frozenset[str]:
 
 
 _ADMIN_DOMAIN_ID = "mcp-tools-administration"
+
+
+async def _install_in_thread(func: Callable[..., Any], *args: Any) -> Any:
+    """Run a blocking pip/npm install, honouring task cancellation (PR 5.9).
+
+    ``abandon_on_cancel=True`` returns control immediately when the caller is
+    cancelled (client disconnect, session idle timeout, shutdown) instead of
+    waiting out installs of up to 15 minutes; the ``cancel_event`` then makes
+    the still-running worker tear the child process group down, so pip/npm
+    does not keep running unattended.
+    """
+    cancel_event = threading.Event()
+    try:
+        return await anyio.to_thread.run_sync(
+            partial(func, *args, cancel_event=cancel_event),
+            abandon_on_cancel=True,
+        )
+    except anyio.get_cancelled_exc_class():
+        cancel_event.set()
+        raise
 _ADMIN_SERVER_ID = "mcp-tools-admin"
 
 # Built-in MCP resource: proxy host clock when resources/read is called (LLM-friendly “what time is it”).
@@ -1544,16 +1566,17 @@ def build_proxy_mcp_server(
                 )
             enabled = _coerce_bool_arg("enabled", args.get("enabled"))
             sid = validate_slug_id(server_id)
-            srv = store.get(sid)
-            if srv is None:
+            try:
+                store.update_fields(
+                    sid, lambda srv: srv.model_copy(update={"enabled": enabled})
+                )
+            except KeyError:
                 raise McpError(
                     mcp_types.ErrorData(
                         code=mcp_types.INVALID_PARAMS,
                         message=f"Unknown server id {sid!r}.",
                     )
                 )
-            srv.enabled = enabled
-            store.update(sid, srv)
             payload = {"ok": True, "serverId": sid, "enabled": enabled}
             return [
                 mcp_types.TextContent(
@@ -1613,7 +1636,7 @@ def build_proxy_mcp_server(
                         )
                     )
                 validate_package_spec(package_spec)
-                result = await anyio.to_thread.run_sync(
+                result = await _install_in_thread(
                     install_into_venv, settings.data_dir, sid, package_spec
                 )
             else:
@@ -1625,7 +1648,7 @@ def build_proxy_mcp_server(
                         )
                     )
                 validate_npm_package_spec(package_spec)
-                result = await anyio.to_thread.run_sync(
+                result = await _install_in_thread(
                     install_npm_prefix, settings.data_dir, sid, package_spec
                 )
             if not result.ok:
@@ -1886,7 +1909,7 @@ def build_proxy_mcp_server(
                             message="PyPI install is disabled (MCP_PROXY_ALLOW_PYPI_INSTALL is false).",
                         )
                     )
-                result = await anyio.to_thread.run_sync(
+                result = await _install_in_thread(
                     install_into_venv, settings.data_dir, sid, upgrade_spec
                 )
             else:
@@ -1897,7 +1920,7 @@ def build_proxy_mcp_server(
                             message="npm install is disabled (MCP_PROXY_ALLOW_NPM_INSTALL is false).",
                         )
                     )
-                result = await anyio.to_thread.run_sync(
+                result = await _install_in_thread(
                     install_npm_prefix, settings.data_dir, sid, upgrade_spec
                 )
             if not result.ok:
@@ -1919,8 +1942,20 @@ def build_proxy_mcp_server(
             else:
                 new_argv = result.suggested_argv
             if new_argv:
-                srv.command = new_argv
-                store.update(sid, srv)
+                # CAS: replace only `command` on the *current* record — a
+                # concurrent enable/edit during the (long) upgrade install
+                # must not be rolled back by writing a pre-upgrade snapshot.
+                try:
+                    store.update_fields(
+                        sid, lambda srv: srv.model_copy(update={"command": new_argv})
+                    )
+                except KeyError:
+                    raise McpError(
+                        mcp_types.ErrorData(
+                            code=mcp_types.INVALID_PARAMS,
+                            message=f"Server {sid!r} was removed during upgrade.",
+                        )
+                    )
             set_stdio_meta(settings.data_dir, sid, ecosystem, upgrade_spec)
             payload = {
                 "ok": True,
