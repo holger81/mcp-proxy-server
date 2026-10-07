@@ -700,6 +700,21 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           return fetch(input, o);
         }
 
+        // PLAN 7.1: every dynamic value interpolated into innerHTML must go
+        // through esc() — server ids, API error details and upstream tool
+        // names are attacker-controlled (a malicious upstream can name a
+        // tool `<img src=x onerror=…>`).
+        const _ESC_MAP = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        };
+        function esc(v) {
+          return String(v).replace(/[&<>"']/g, (c) => _ESC_MAP[c]);
+        }
+
         const _meRes = await apiFetch("/api/auth/me");
         const _me = await _meRes.json().catch(() => ({}));
         if (_me.auth_enabled && !_me.logged_in) {
@@ -710,12 +725,9 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
         if (!_me.auth_enabled) {
           const ban = document.getElementById("auth-off-banner");
           ban.classList.remove("hidden");
+          // Single template literal (no `+`): provably static markup.
           ban.innerHTML =
-            "<strong>No admin password is set.</strong> Anyone who can reach this service can use the admin UI and API. " +
-            "Set <code>MCP_PROXY_ADMIN_PASSWORD</code> and <code>MCP_PROXY_SESSION_SECRET</code> (≥16 random chars), " +
-            "or Docker secret files via <code>MCP_PROXY_ADMIN_PASSWORD_FILE</code> and " +
-            "<code>MCP_PROXY_SESSION_SECRET_FILE</code>, then restart. Check container logs for “Authentication is enabled”. " +
-            'Then use <a href="/admin/login.html">Sign in</a>.';
+            `<strong>No admin password is set.</strong> Anyone who can reach this service can use the admin UI and API. Set <code>MCP_PROXY_ADMIN_PASSWORD</code> and <code>MCP_PROXY_SESSION_SECRET</code> (≥16 random chars), or Docker secret files via <code>MCP_PROXY_ADMIN_PASSWORD_FILE</code> and <code>MCP_PROXY_SESSION_SECRET_FILE</code>, then restart. Check container logs for “Authentication is enabled”. Then use <a href="/admin/login.html">Sign in</a>.`;
         }
 
         const api = "/api/servers";
@@ -1087,7 +1099,8 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
               };
             }
           } catch (e) {
-            editMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            editMsg.innerHTML =
+              '<div class="msg err">' + esc(e.message || String(e)) + "</div>";
             return;
           }
           const res = await apiFetch(api + "/" + encodeURIComponent(id), {
@@ -1104,7 +1117,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
                 : Array.isArray(detail)
                   ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
                   : JSON.stringify(data);
-            editMsg.innerHTML = '<div class="msg err">' + msg + "</div>";
+            editMsg.innerHTML = '<div class="msg err">' + esc(msg) + "</div>";
             return;
           }
           editDialog.close();
@@ -1465,9 +1478,11 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             const span = document.createElement("span");
             span.innerHTML =
               "<code>" +
-              t.toolName +
+              esc(t.toolName) +
               "</code>" +
-              (t.domain ? ' <span class="hint">(' + t.domain + ")</span>" : "");
+              (t.domain
+                ? ' <span class="hint">(' + esc(t.domain) + ")</span>"
+                : "");
             row.appendChild(span);
             listEl.appendChild(row);
           }
@@ -1533,7 +1548,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             const data = await clientRes.json().catch(() => ({}));
             if (!clientRes.ok) {
               msg.innerHTML =
-                '<div class="msg err">Failed to load client (' + clientRes.status + ")</div>";
+                '<div class="msg err">Failed to load client (' + esc(clientRes.status) + ")</div>";
               return;
             }
             document.getElementById("client-config-label").value = data.label || "";
@@ -1544,7 +1559,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             buildClientToolsCheckboxes(catalog.tools || [], new Set(data.disabled_tools || []));
             panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
           } catch (e) {
-            msg.innerHTML = '<div class="msg err">' + String(e) + "</div>";
+            msg.innerHTML = '<div class="msg err">' + esc(String(e)) + "</div>";
           }
         }
 
@@ -1554,7 +1569,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           const res = await apiFetch(apiClients);
           if (!res.ok) {
             clientMsg.innerHTML =
-              '<div class="msg err">Failed to load clients (' + res.status + ")</div>";
+              '<div class="msg err">Failed to load clients (' + esc(res.status) + ")</div>";
             return;
           }
           const list = await res.json();
@@ -1628,7 +1643,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             const d = data.detail;
             clientMsg.innerHTML =
               '<div class="msg err">' +
-              (typeof d === "string" ? d : JSON.stringify(data)) +
+              esc(typeof d === "string" ? d : JSON.stringify(data)) +
               "</div>";
             return;
           }
@@ -1679,7 +1694,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
             const d = data.detail;
             msg.innerHTML =
               '<div class="msg err">' +
-              (typeof d === "string" ? d : JSON.stringify(data)) +
+              esc(typeof d === "string" ? d : JSON.stringify(data)) +
               "</div>";
             return;
           }
@@ -1698,7 +1713,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           const domainsEmpty = document.getElementById("domains-empty");
           if (!res.ok) {
             domainMsg.innerHTML =
-              '<div class="msg err">Failed to load domains (' + res.status + ")</div>";
+              '<div class="msg err">Failed to load domains (' + esc(res.status) + ")</div>";
             return;
           }
           const list = await res.json();
@@ -1761,7 +1776,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           if (!res.ok) {
             domainMsg.innerHTML =
               '<div class="msg err">' +
-              (typeof data.detail === "string" ? data.detail : JSON.stringify(data)) +
+              esc(typeof data.detail === "string" ? data.detail : JSON.stringify(data)) +
               "</div>";
             return;
           }
@@ -1970,7 +1985,8 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           } catch (e) {
             wizLog.classList.add("hidden");
             wizLog.textContent = "";
-            wizMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            wizMsg.innerHTML =
+              '<div class="msg err">' + esc(e.message || String(e)) + "</div>";
             return;
           }
           if (!server_id || !pkgSpec) {
@@ -1998,13 +2014,14 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
               const d = data.detail;
               wizMsg.innerHTML =
                 '<div class="msg err">' +
-                (typeof d === "string" ? d : JSON.stringify(d, null, 2)) +
+                esc(typeof d === "string" ? d : JSON.stringify(d, null, 2)) +
                 "</div>";
               return;
             }
             if (!r.ok) {
               wizLog.textContent = JSON.stringify(data, null, 2);
-              wizMsg.innerHTML = '<div class="msg err">Request failed (' + r.status + ").</div>";
+              wizMsg.innerHTML =
+                '<div class="msg err">Request failed (' + esc(r.status) + ").</div>";
               return;
             }
             let out = data.log || "";
@@ -2046,7 +2063,8 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
               llm_context: document.getElementById("f-llm").value.trim(),
             };
           } catch (e) {
-            formMsg.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            formMsg.innerHTML =
+              '<div class="msg err">' + esc(e.message || String(e)) + "</div>";
             return;
           }
           const res = await apiFetch(api, {
@@ -2063,7 +2081,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
                 : Array.isArray(detail)
                   ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
                   : JSON.stringify(data);
-            formMsg.innerHTML = '<div class="msg err">' + msg + "</div>";
+            formMsg.innerHTML = '<div class="msg err">' + esc(msg) + "</div>";
             return;
           }
           formMsg.innerHTML = '<div class="msg ok">Saved.</div>';
@@ -2088,7 +2106,8 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
           try {
             env = parseJsonObject(document.getElementById("ms-env").value, "Environment");
           } catch (e) {
-            msgEl.innerHTML = '<div class="msg err">' + (e.message || String(e)) + "</div>";
+            msgEl.innerHTML =
+              '<div class="msg err">' + esc(e.message || String(e)) + "</div>";
             return;
           }
           const cwdRaw = document.getElementById("ms-cwd").value.trim();
@@ -2120,7 +2139,7 @@ MAIL_SMTP_SEND_TIMEOUT_MS</pre>
                 : Array.isArray(detail)
                   ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
                   : JSON.stringify(data);
-            msgEl.innerHTML = '<div class="msg err">' + msg + "</div>";
+            msgEl.innerHTML = '<div class="msg err">' + esc(msg) + "</div>";
             return;
           }
           msgEl.innerHTML =
