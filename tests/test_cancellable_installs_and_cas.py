@@ -202,7 +202,8 @@ async def test_register_stdio_server_install_cancellable(tmp_path, monkeypatch):
     monkeypatch.setattr(pm, "install_into_venv", fake_install)
 
     store = ServerConfigStore(tmp_path)
-    settings = Settings(data_dir=tmp_path)
+    # PLAN 4.6b: installs are opt-in, so this test has to enable them.
+    settings = Settings(data_dir=tmp_path, allow_pypi_install=True)
     stats = ToolCallStatsStore(tmp_path, flush_interval_s=3600.0)
     domain_store = SimpleNamespace(
         list_records=lambda: [], id_set=lambda: {"default"}

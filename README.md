@@ -349,9 +349,18 @@ Then:
   with a hint pointing at the toggle. Everything else (the MCP endpoint, per-client tool policy)
   is unchanged for bearer tokens.
 
-> ⚠️ **Upcoming:** if no admin password is set **and** the proxy binds a non-loopback address,
-> the next release will **refuse to start** unless you set `MCP_PROXY_ALLOW_NO_AUTH=true`
-> (deliberate open deployment). Today this only logs a loud startup warning.
+> 🔴 **Breaking (2026-10 release):** if no admin password is set **and** the proxy binds a
+> non-loopback address, it now **refuses to start**. Set `MCP_PROXY_ADMIN_PASSWORD` (+
+> `MCP_PROXY_SESSION_SECRET`), or `MCP_PROXY_ALLOW_NO_AUTH=true` for a deliberate open
+> deployment, or bind to `127.0.0.1`. (Warned since the previous release.)
+
+Two related default flips shipped in the same release:
+
+- `MCP_PROXY_ALLOW_PYPI_INSTALL` / `MCP_PROXY_ALLOW_NPM_INSTALL` now default to **false** —
+  package installs from the admin UI/tools are opt-in; set them to `true` to keep installs.
+- `MCP_PROXY_PROPAGATE_TOOL_ERRORS` now defaults to **true** — upstream tool failures reach
+  clients as proper `isError` results (with `structuredContent` forwarded) instead of
+  successful-looking text. Set it to `false` to restore the old masking.
 
 ---
 ## ⚙️ Environment Variables
@@ -361,12 +370,12 @@ Then:
 | MCP_PROXY_HOST | 0.0.0.0 | Bind address |
 | MCP_PROXY_PORT | 8080 | Port |
 | MCP_PROXY_DATA_DIR | /data | Storage |
-| MCP_PROXY_ALLOW_PYPI_INSTALL | true | Allow PyPI installs (**default will change to `false` in the next release** — set it explicitly) |
-| MCP_PROXY_ALLOW_NPM_INSTALL | true | Allow npm installs (**default will change to `false` in the next release** — set it explicitly) |
-| MCP_PROXY_PROPAGATE_TOOL_ERRORS | false | Forward upstream tool errors (`isError`) and `structuredContent` verbatim (**default will change to `true` in the next release** — set it explicitly) |
+| MCP_PROXY_ALLOW_PYPI_INSTALL | false | Allow PyPI installs (default flipped from `true` in the 2026-10 release — set `true` to keep installs) |
+| MCP_PROXY_ALLOW_NPM_INSTALL | false | Allow npm installs (default flipped from `true` in the 2026-10 release — set `true` to keep installs) |
+| MCP_PROXY_PROPAGATE_TOOL_ERRORS | true | Forward upstream tool errors (`isError`) and `structuredContent` verbatim (default flipped from `false` in the 2026-10 release — set `false` to hide them as text) |
 | MCP_PROXY_ADMIN_PASSWORD | - | Enable auth |
 | MCP_PROXY_SESSION_SECRET | - | Required if auth enabled |
-| MCP_PROXY_ALLOW_NO_AUTH | false | Next release: must be `true` to start without a password on a non-loopback bind (warn-only today) |
+| MCP_PROXY_ALLOW_NO_AUTH | false | Must be `true` to start without a password on a non-loopback bind (enforced since the 2026-10 release) |
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
 | MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients), e.g. `email__list_emails`. Names that need other characters fall back to a hex suffix after `__p__`. Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
 | MCP_PROXY_TOOL_LIST_CACHE_TTL_S | 30 | How long a server's upstream `tools/list` result is cached for discovery. Edits in the admin UI invalidate that server immediately (the cache key includes the config), and a failed upstream is retried on the next discovery. Set `0` to disable caching (every discovery connects to every upstream again). |
