@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from mcp_proxy.cancellable_proc import run_process
 from mcp_proxy.models import validate_slug_id
 
 # PyPI name + optional extras + optional PEP 440-ish version (no URLs, no shell).
@@ -81,7 +83,9 @@ def _pick_console_script(candidates: list[str], dist_guess: str) -> str | None:
     return exact or candidates[0]
 
 
-def ensure_venv(venv: Path) -> tuple[str, set[str]]:
+def ensure_venv(
+    venv: Path, cancel_event: threading.Event | None = None
+) -> tuple[str, set[str]]:
     """Create venv if missing. Returns (log, bin names after ensure)."""
     log_parts: list[str] = []
     bin_dir = venv / "bin"
@@ -91,11 +95,10 @@ def ensure_venv(venv: Path) -> tuple[str, set[str]]:
 
     venv.parent.mkdir(parents=True, exist_ok=True)
     log_parts.append(f"Creating venv: {venv}\n")
-    proc = subprocess.run(
+    proc = run_process(
         [sys.executable, "-m", "venv", str(venv)],
-        capture_output=True,
-        text=True,
-        timeout=180,
+        timeout_s=180,
+        cancel_event=cancel_event,
     )
     if proc.stdout:
         log_parts.append(proc.stdout)
@@ -110,9 +113,11 @@ def ensure_venv(venv: Path) -> tuple[str, set[str]]:
     return "".join(log_parts), _bin_names(bin_dir)
 
 
-def pip_install(venv: Path, package_spec: str) -> tuple[str, int]:
+def pip_install(
+    venv: Path, package_spec: str, cancel_event: threading.Event | None = None
+) -> tuple[str, int]:
     """Run pip install; returns (combined log, return code)."""
-    proc = subprocess.run(
+    proc = run_process(
         [
             str(_python_exe(venv)),
             "-m",
@@ -122,9 +127,8 @@ def pip_install(venv: Path, package_spec: str) -> tuple[str, int]:
             "--upgrade",
             package_spec,
         ],
-        capture_output=True,
-        text=True,
-        timeout=600,
+        timeout_s=600,
+        cancel_event=cancel_event,
     )
     parts = []
     if proc.stdout:
@@ -144,7 +148,10 @@ class PypiInstallResult:
 
 
 def install_into_venv(
-    data_dir: Path, venv_id: str, package_spec: str
+    data_dir: Path,
+    venv_id: str,
+    package_spec: str,
+    cancel_event: threading.Event | None = None,
 ) -> PypiInstallResult:
     vid = validate_slug_id(venv_id)
     spec = validate_package_spec(package_spec)
@@ -156,10 +163,12 @@ def install_into_venv(
         raise ValueError("invalid venv path") from e
 
     try:
-        log, baseline_names = ensure_venv(venv)
-        pip_log, code = pip_install(venv, spec)
+        log, baseline_names = ensure_venv(venv, cancel_event)
+        pip_log, code = pip_install(venv, spec, cancel_event)
         log += pip_log
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        # InstallCancelled is a RuntimeError: an abandoned (cancelled) install
+        # thread ends here and its discarded result never reaches a caller.
         return PypiInstallResult(
             ok=False,
             log=str(e),
