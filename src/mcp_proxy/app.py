@@ -21,6 +21,7 @@ from mcp_proxy.log_buffer import attach_ring_logging
 from mcp_proxy.mcp_client_log import McpClientAuditMiddleware
 from mcp_proxy.live_mcp_tracker import LiveMcpTracker
 from mcp_proxy.mcp_live_tracker_middleware import McpLiveTrackerMiddleware
+from mcp_proxy.admin_security_headers import SecurityHeadersASGI
 from mcp_proxy.rate_limit import LoginRateLimiter
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.domain_store import DomainStore
@@ -268,7 +269,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.mount(
             "/admin",
-            StaticFiles(directory=str(admin_dir), html=True),
+            SecurityHeadersASGI(
+                StaticFiles(directory=str(admin_dir), html=True)
+            ),
             name="admin",
         )
 
