@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#36](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#37](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -378,6 +378,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 7.1 Admin UI: escape all dynamic innerHTML (+3 guard tests) | `fix/admin-ui-escape` (main) [#34] | ✅ CI green; merged `749d94b` |
 | 7.2 CSP + hardening headers on /admin/*, external page scripts (+6 tests) | `fix/admin-csp` (main) [#35] | ✅ CI green; merged `7ee9e73` |
 | Coordinated release: D4 flips 4.6b + 4.7b + 5.2b (warn-tests → flip/enforce tests) | `release/coordinated-flips` (main) [#36] | ✅ CI green incl. smoke; merged `b7534e8`; live deploy verified via Portainer (new image up, /admin CSP headers live) |
+| Hotfix: serve `login.js` unauthenticated — 7.2 broke admin login with auth on (+4 tests) | `fix/login-page-assets-public` (main) [#37] | ✅ CI green; merged `f9bcc09`; live login verified end-to-end (`POST /api/auth/login` 200, session cookie, `/admin/` + `app.js` 200) |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -419,5 +420,14 @@ Notes for later PRs (learned while writing the harness/tests):
   `server_fingerprint` duck-types (falls back to `__dict__`), and
   `build_proxy_mcp_server(..., tool_list_cache=...)` controls caching
   (default comes from `settings.tool_list_cache_ttl_s`).
+- `AuthEnforcementMiddleware` gates `/admin/*` by *path allowlist*; anything
+  externalized into a login-page asset (PR 7.2's `login.js`) must be added to
+  the exempt filename set, or the login form breaks silently with auth on.
+  The proxy suite never exercised the middleware over the real static mount
+  until `tests/test_login_page_public_assets.py` (#37).
+- Starlette's `TestClient` follows redirects by default — assert raw 302s with
+  `follow_redirects=False`, or a redirect silently reports as `200`.
 
-Done — the coordinated release (D4 flips) is live (#36). Nothing remains on the plan; see "Explicitly deferred" for the parked backlog.
+Done — the coordinated release (D4 flips) is live (#36) plus the post-release
+login hotfix (#37). Nothing remains on the plan; see "Explicitly deferred" for
+the parked backlog.
