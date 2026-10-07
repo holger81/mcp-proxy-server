@@ -369,6 +369,16 @@ Then:
 | MCP_PROXY_ALLOW_NO_AUTH | false | Next release: must be `true` to start without a password on a non-loopback bind (warn-only today) |
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
 | MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients), e.g. `email__list_emails`. Names that need other characters fall back to a hex suffix after `__p__`. Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
+| MCP_PROXY_TOOL_LIST_CACHE_TTL_S | 30 | How long a server's upstream `tools/list` result is cached for discovery. Edits in the admin UI invalidate that server immediately (the cache key includes the config), and a failed upstream is retried on the next discovery. Set `0` to disable caching (every discovery connects to every upstream again). |
+
+> **Discovery freshness:** after you change a server's config, or after an
+> install/upgrade through the proxy, the new tool list is picked up on the next
+> discovery. If an upstream's tools change *on their own* (e.g. you redeployed
+> the upstream container without touching this proxy), they appear within
+> `MCP_PROXY_TOOL_LIST_CACHE_TTL_S` seconds. Discovery queries all enabled
+> upstreams concurrently under one shared `upstream_timeout_s` deadline, and any
+> upstream that failed or timed out is reported as `degradedServers` in the
+> search results instead of silently missing.
 
 ---
 ## 🧪 Development
