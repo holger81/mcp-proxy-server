@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from mcp_proxy.json_file_cache import MtimeJsonCache
 from mcp_proxy.models import validate_slug_id
 from mcp_proxy.tool_names import canonical_tool_key
 
@@ -95,11 +96,12 @@ class ClientTokenStore:
         self._config_dir = data_dir / "config"
         self._path = self._config_dir / "api_clients.json"
         self._lock = threading.Lock()
+        self._cache = MtimeJsonCache(self._path, self._parse)
 
-    def _read(self) -> ApiClientListFile:
-        if not self._path.is_file():
+    def _parse(self, path: Path) -> ApiClientListFile:
+        if not path.is_file():
             return ApiClientListFile()
-        text = self._path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         if not text.strip():
             return ApiClientListFile()
         raw = json.loads(text)
@@ -111,6 +113,11 @@ class ClientTokenStore:
             row.setdefault("can_admin", False)
         return ApiClientListFile.model_validate(raw)
 
+    def _read(self) -> ApiClientListFile:
+        # PLAN 6.1: stat-only on repeat reads; callers below must not mutate
+        # the returned document (records handed out are deep-copied).
+        return self._cache.get()
+
     def _write_unlocked(self, doc: ApiClientListFile) -> None:
         self._config_dir.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".json.tmp")
@@ -119,6 +126,7 @@ class ClientTokenStore:
             encoding="utf-8",
         )
         tmp.replace(self._path)
+        self._cache.invalidate()
 
     def list_public(self) -> list[dict[str, Any]]:
         with self._lock:

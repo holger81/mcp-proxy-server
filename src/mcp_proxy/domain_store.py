@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from mcp_proxy.json_file_cache import MtimeJsonCache
 from mcp_proxy.models import (
     RESERVED_DOMAIN_IDS,
     reject_reserved_id,
@@ -50,18 +51,24 @@ class DomainStore:
         self._config_dir = data_dir / "config"
         self._path = self._config_dir / "domains.json"
         self._lock = threading.Lock()
+        self._cache = MtimeJsonCache(self._path, self._parse)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _read(self) -> DomainListFile:
-        if not self._path.is_file():
+    def _parse(self, path: Path) -> DomainListFile:
+        if not path.is_file():
             return DomainListFile()
-        text = self._path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         if not text.strip():
             return DomainListFile()
         return DomainListFile.model_validate(json.loads(text))
+
+    def _read(self) -> DomainListFile:
+        # PLAN 6.1: stat-only on repeat reads; the document is shared, so
+        # record-level readers below hand out deep copies.
+        return self._cache.get()
 
     def _write_unlocked(self, doc: DomainListFile) -> None:
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +78,7 @@ class DomainStore:
             encoding="utf-8",
         )
         tmp.replace(self._path)
+        self._cache.invalidate()
 
     def ensure_default_domain(self) -> None:
         """If no domains file or empty list, create default domain."""
@@ -88,7 +96,7 @@ class DomainStore:
 
     def list_records(self) -> list[DomainRecord]:
         with self._lock:
-            return list(self._read().domains)
+            return [d.model_copy(deep=True) for d in self._read().domains]
 
     def id_set(self) -> set[str]:
         return {d.id for d in self.list_records()}
@@ -98,7 +106,7 @@ class DomainStore:
         with self._lock:
             for d in self._read().domains:
                 if d.id == did:
-                    return d
+                    return d.model_copy(deep=True)
         return None
 
     def add(self, record: DomainRecord) -> None:
