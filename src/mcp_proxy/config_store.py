@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from mcp_proxy.json_file_cache import MtimeJsonCache
 from mcp_proxy.models import ServerListFile, UpstreamServer
 
 
@@ -15,29 +16,35 @@ class ServerConfigStore:
         self._config_dir = data_dir / "config"
         self._path = self._config_dir / "servers.json"
         self._lock = threading.Lock()
+        self._cache = MtimeJsonCache(self._path, self._parse)
 
     @property
     def path(self) -> Path:
         return self._path
 
-    def _read_raw(self) -> ServerListFile:
-        if not self._path.is_file():
+    def _parse(self, path: Path) -> ServerListFile:
+        if not path.is_file():
             return ServerListFile()
-        text = self._path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
         if not text.strip():
             return ServerListFile()
         data = json.loads(text)
         return ServerListFile.model_validate(data)
 
+    def _read_raw(self) -> ServerListFile:
+        # PLAN 6.1: stat-only on repeat reads; the document is shared, so
+        # record-level readers below hand out deep copies.
+        return self._cache.get()
+
     def list_servers(self) -> list[UpstreamServer]:
         with self._lock:
-            return list(self._read_raw().servers)
+            return [s.model_copy(deep=True) for s in self._read_raw().servers]
 
     def get(self, server_id: str) -> UpstreamServer | None:
         with self._lock:
             for s in self._read_raw().servers:
                 if s.id == server_id:
-                    return s
+                    return s.model_copy(deep=True)
         return None
 
     def add(self, server: UpstreamServer) -> None:
@@ -88,7 +95,7 @@ class ServerConfigStore:
             doc = self._read_raw()
             for i, s in enumerate(doc.servers):
                 if s.id == server_id:
-                    updated = mutate(s)
+                    updated = mutate(s.model_copy(deep=True))
                     if updated.id != server_id:
                         raise ValueError("mutate must not change the server id")
                     doc.servers[i] = updated
@@ -102,3 +109,4 @@ class ServerConfigStore:
         tmp = self._path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         tmp.replace(self._path)
+        self._cache.invalidate()
