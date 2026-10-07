@@ -86,6 +86,13 @@
     <p class="hint"><a href="/admin/">Back to admin</a> · <a href="/api/health">Health</a></p>
     <script>
       (async function () {
+        function esc(v) {
+          return String(v).replace(
+            /[&<>"']/g,
+            (c) =>
+              ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+          );
+        }
         const msg = document.getElementById("msg");
         const r = await fetch("/api/auth/me", { credentials: "include" });
         const me = await r.json().catch(() => ({}));
@@ -112,7 +119,9 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
             msg.innerHTML =
-              '<div class="msg err">' + (typeof data.detail === "string" ? data.detail : "Sign-in failed") + "</div>";
+              '<div class="msg err">' +
+              esc(typeof data.detail === "string" ? data.detail : "Sign-in failed") +
+              "</div>";
             return;
           }
           window.location.replace("/admin/");
