@@ -166,6 +166,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="MCP Proxy",
         version="0.1.0",
         redirect_slashes=False,
+        # PR 38 (external audit): /redoc was served by default and the auth gate
+        # in security.py only covered /docs + /openapi.json. The Redoc page adds
+        # nothing over the gated Swagger UI, so don't register it at all.
+        redoc_url=None,
         description=(
             "MCP proxy: aggregates upstream MCP servers behind Streamable HTTP on /mcp. "
             "LLM clients get discovery/execution tools (searchToolsForDomain, searchTool, callTool, "

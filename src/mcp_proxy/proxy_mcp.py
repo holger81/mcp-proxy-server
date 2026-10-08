@@ -103,6 +103,62 @@ async def _install_in_thread(func: Callable[..., Any], *args: Any) -> Any:
         raise
 _ADMIN_SERVER_ID = "mcp-tools-admin"
 
+# PR 38 (external audit): the proxy-admin tools dispatched by plain name inside
+# ``_call_tool_impl``. Every route to them (direct tools/call, ``callTool`` with
+# the ``mcp-tools-admin/…`` composite, popular-tool hot shortcuts) recurses into
+# that dispatch, so one gate at the top of ``_call_tool_impl`` covers all of them.
+_ADMIN_TOOL_NAMES = frozenset(
+    {
+        "listServers",
+        "setServerEnabled",
+        "registerStdioServer",
+        "registerManualStdioServer",
+        "upgradeStdioServer",
+        "removeServer",
+    }
+)
+
+# Warn-once memory for the warn-first phase (keyed client id + tool name).
+_warned_mcp_admin_calls: set[tuple[str, str]] = set()
+
+
+def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
+    """PR 38: /mcp admin tools require the client's ``can_admin`` scope.
+
+    Mirrors the HTTP admin API (``require_admin_api``, since 4.2): an unbound
+    client means auth is disabled (single-user mode) and stays allowed. Warn-first
+    rollout per D4 — enforcement only when ``enforce_mcp_admin_tools`` is set;
+    otherwise log once per (client, tool) and let the call through.
+    """
+    if name not in _ADMIN_TOOL_NAMES:
+        return
+    client = resolve_current_api_client()
+    if client is None or client.can_admin:
+        return
+    if settings.enforce_mcp_admin_tools:
+        raise McpError(
+            mcp_types.ErrorData(
+                code=mcp_types.INVALID_PARAMS,
+                message=(
+                    f"Admin tool {name!r} requires the can_admin scope on this "
+                    "API client. Ask an administrator to grant it in the proxy "
+                    "admin UI (Clients -> can_admin)."
+                ),
+            )
+        )
+    key = (client.id, name)
+    if key not in _warned_mcp_admin_calls:
+        _warned_mcp_admin_calls.add(key)
+        log.warning(
+            "MCP client %r called proxy admin tool %r without the can_admin "
+            "scope. The HTTP admin API already requires it; a future release "
+            "will deny this call on /mcp too. Grant the scope or set "
+            "MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to enforce now.",
+            client.id,
+            name,
+        )
+
+
 # Built-in MCP resource: proxy host clock when resources/read is called (LLM-friendly “what time is it”).
 _PROXY_DATETIME_RESOURCE_URI_STR = "mcp-proxy://meta/current-datetime"
 
@@ -1276,6 +1332,7 @@ def build_proxy_mcp_server(
             assert_tool_allowed(hot_wire, disabled)
 
         assert_tool_allowed(name, disabled)
+        _assert_mcp_admin_allowed(name, settings)
 
         if name == "searchToolsForDomain":
             dom = args.get("domain")
