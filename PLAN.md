@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#37](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#38](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -379,6 +379,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | 7.2 CSP + hardening headers on /admin/*, external page scripts (+6 tests) | `fix/admin-csp` (main) [#35] | ✅ CI green; merged `7ee9e73` |
 | Coordinated release: D4 flips 4.6b + 4.7b + 5.2b (warn-tests → flip/enforce tests) | `release/coordinated-flips` (main) [#36] | ✅ CI green incl. smoke; merged `b7534e8`; live deploy verified via Portainer (new image up, /admin CSP headers live) |
 | Hotfix: serve `login.js` unauthenticated — 7.2 broke admin login with auth on (+4 tests) | `fix/login-page-assets-public` (main) [#37] | ✅ CI green; merged `f9bcc09`; live login verified end-to-end (`POST /api/auth/login` 200, session cookie, `/admin/` + `app.js` 200) |
+| External-audit Critical #1: gate `/mcp` admin tools behind `can_admin` (warn-first, `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1` to deny) + drop public `/redoc` (`redoc_url=None`, gate `/redoc` defensively) (+9 tests) | `pr/mcp-admin-gating` (main) [#38] | ✅ CI green; merged `a7436f4` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -396,7 +397,7 @@ Notes for later PRs (learned while writing the harness/tests):
 - `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
 - httpx ≥ 0.28 has **no** `on_redirect` event hook (unknown hook keys are silently dropped) — redirect interception lives in `limited_get`'s manual hop loop now.
 - Python ≥ 3.14 `ipaddress.is_private` excludes CGNAT `100.64.0.0/10` — check ranges explicitly in `url_guard`.
-- Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint unaffected. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
+- Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint got the same treatment for **admin tools** only, via PR #38 (`a7436f4`): warn-first default, flip with `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1`. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
 
 - `mcp` SDK: `Server.create_initialization_options()` reads `self.instructions` at
@@ -427,7 +428,12 @@ Notes for later PRs (learned while writing the harness/tests):
   until `tests/test_login_page_public_assets.py` (#37).
 - Starlette's `TestClient` follows redirects by default — assert raw 302s with
   `follow_redirects=False`, or a redirect silently reports as `200`.
+- `mcp_proxy/app.py` runs `app = create_app()` at **import time**, so any test
+  importing it must monkeypatch env first: `MCP_PROXY_DATA_DIR` (CI can't write
+  `/data`), plus `MCP_PROXY_ADMIN_USER`/`PASSWORD`/`SESSION_SECRET` when the
+  4.7b bind policy would otherwise refuse to start.
 
-Done — the coordinated release (D4 flips) is live (#36) plus the post-release
-login hotfix (#37). Nothing remains on the plan; see "Explicitly deferred" for
-the parked backlog.
+Done — the coordinated release (D4 flips) is live (#36), the post-release login
+hotfix (#37), and the external-audit follow-up gating `/mcp` admin tools behind
+`can_admin` with `/redoc` removed (#38). Nothing remains on the plan; see
+"Explicitly deferred" for the parked backlog.
