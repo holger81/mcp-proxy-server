@@ -209,6 +209,7 @@ def test_redoc_url_disabled_on_app(tmp_path, monkeypatch: pytest.MonkeyPatch):
     # mcp_proxy.app builds a module-level ``app = create_app()`` at import
     # time; the 4.7b bind policy refuses the default (0.0.0.0 + no auth), so
     # give the import a valid authenticated configuration.
+    monkeypatch.setenv("MCP_PROXY_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("MCP_PROXY_ADMIN_USER", "tester")
     monkeypatch.setenv("MCP_PROXY_ADMIN_PASSWORD", "test-password")
     monkeypatch.setenv(
