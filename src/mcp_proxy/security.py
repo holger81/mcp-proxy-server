@@ -211,7 +211,9 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
                 return RedirectResponse(url="/admin/login.html", status_code=302)
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
-        if path.startswith("/docs") or path == "/openapi.json":
+        # PR 38: /redoc is no longer registered (redoc_url=None in app.py); the
+        # gate keeps it closed should a future FastAPI re-add it by default.
+        if path.startswith("/docs") or path in ("/openapi.json", "/redoc"):
             if request.session.get(SESSION_ADMIN_KEY):
                 return await call_next(request)
             if _should_redirect_browser_to_login(request):

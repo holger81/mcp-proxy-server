@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # structuredContent (default flipped from false). Set false to hide
     # upstream errors as plain text again.
     propagate_tool_errors: Annotated[bool, BeforeValidator(_env_bool)] = True
+    # PR 38 (external audit): admin tools on /mcp (listServers, setServerEnabled,
+    # register*/upgrade*StdioServer, removeServer) require the same ``can_admin``
+    # scope the HTTP admin API has enforced since 4.2. Warn-first (D4): while this
+    # flag is false, clients missing the scope are warned once per tool and still
+    # allowed through; set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to deny now.
+    enforce_mcp_admin_tools: Annotated[bool, BeforeValidator(_env_bool)] = False
     static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""
