@@ -226,6 +226,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Innermost of the HTTP stack (runs just before routing): fix `/mcp` vs `/mcp/` for the mount.
     app.add_middleware(_NormalizeMcpPathASGI)
     app.add_middleware(AuthEnforcementMiddleware, settings=settings)
+    # Inside SessionMiddleware so admin UI cookies are visible on scope["session"]
+    # (needed for /mcp admin-tool gating + fail-closed bearer bind).
+    app.add_middleware(
+        McpLiveTrackerMiddleware,
+        tracker=app.state.live_mcp_tracker,
+        client_store=app.state.client_store,
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=session_key,
@@ -245,11 +252,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["mcp-session-id", "mcp-protocol-version", "last-event-id"],
     )
     # Outermost: CORS, then richer /mcp lines (UA, session prefix, Origin, X-Forwarded-For).
-    app.add_middleware(
-        McpLiveTrackerMiddleware,
-        tracker=app.state.live_mcp_tracker,
-        client_store=app.state.client_store,
-    )
     app.add_middleware(McpClientAuditMiddleware)
 
     app.include_router(api_router, prefix="/api")

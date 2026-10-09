@@ -193,7 +193,7 @@ async def test_admin_client_allowed_in_enforce_mode(tmp_path):
 
 
 async def test_unbound_client_allowed_in_enforce_mode(tmp_path):
-    """No identity bound → auth is disabled (single-user mode). Mirrors
+    """No identity bound + auth disabled → single-user mode. Mirrors
     ``require_admin_api``, which allows everything when auth is off."""
     srv = _build(tmp_path, enforce=True)
     call = _caller(srv)
@@ -202,7 +202,52 @@ async def test_unbound_client_allowed_in_enforce_mode(tmp_path):
     assert "s1" in result.content[0].text
 
 
+async def test_unbound_denied_when_auth_enabled_and_enforce(tmp_path):
+    """Auth on + unbound must not fail-open admin tools (deleted-token race)."""
+    settings = Settings(
+        data_dir=tmp_path,
+        enforce_mcp_admin_tools=True,
+        admin_password="test-password",
+        session_secret="s3cret-s3cret-1234",
+    )
+    assert settings.auth_enabled
+    stats = ToolCallStatsStore(tmp_path, flush_interval_s=3600.0)
+    servers = [UpstreamServer(id="s1", type="http", url="http://x/mcp")]
+    srv = pm.build_proxy_mcp_server(
+        FakeStore(servers),
+        SimpleNamespace(list_records=lambda: []),
+        settings,
+        stats,
+    )
+    call = _caller(srv)
+    result = await call("listServers", {})
+    assert result.isError
+    assert "can_admin" in result.content[0].text
+
+
+async def test_admin_session_allows_even_with_plain_bearer(tmp_path):
+    """Admin UI session wins over a plain (non-can_admin) Bearer, like HTTP."""
+    srv = _build(tmp_path, enforce=True)
+    call = _caller(srv)
+    tok_client = current_mcp_api_client.set(_client(can_admin=False))
+    from mcp_proxy.live_mcp_tracker import current_mcp_admin_session
+
+    tok_admin = current_mcp_admin_session.set(True)
+    try:
+        result = await call("listServers", {})
+    finally:
+        current_mcp_admin_session.reset(tok_admin)
+        current_mcp_api_client.reset(tok_client)
+    assert not result.isError
+    assert "s1" in result.content[0].text
+
+
 # --- /redoc removed + security gate --------------------------------------------
+
+
+def test_admin_tool_catalog_matches_gate_names(tmp_path):
+    rows = pm._admin_tool_rows(Settings(data_dir=tmp_path))
+    assert {r["_proxyUpstreamTool"] for r in rows} == pm._ADMIN_TOOL_NAMES
 
 
 def test_redoc_url_disabled_on_app(tmp_path, monkeypatch: pytest.MonkeyPatch):

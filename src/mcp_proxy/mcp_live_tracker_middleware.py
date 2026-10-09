@@ -10,6 +10,7 @@ from starlette.types import Receive, Scope, Send
 
 from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
+    current_mcp_admin_session,
     current_mcp_api_client,
     current_mcp_api_client_id,
     current_mcp_api_client_label,
@@ -18,6 +19,7 @@ from mcp_proxy.live_mcp_tracker import (
     current_mcp_user_agent,
     update_session_identity,
 )
+from mcp_proxy.security import SESSION_ADMIN_KEY
 
 logger = logging.getLogger("mcp_proxy.auth")
 
@@ -51,6 +53,7 @@ class McpLiveTrackerMiddleware:
 
     - Sets contextvars with session + auth info so `callTool` can associate work to a client.
     - Touches the in-memory tracker on every /mcp HTTP exchange.
+    - Must run *inside* ``SessionMiddleware`` so admin UI cookies are visible on ``scope["session"]``.
     """
 
     def __init__(self, app: Callable, tracker: LiveMcpTracker, client_store) -> None:
@@ -75,6 +78,12 @@ class McpLiveTrackerMiddleware:
         sess = (hdrs.get("mcp-session-id") or "").strip() or None
         ua = (hdrs.get("user-agent") or "").strip() or None
 
+        # SessionMiddleware (outer) has already loaded the cookie into scope.
+        session_data = scope.get("session")
+        admin_session = bool(
+            isinstance(session_data, dict) and session_data.get(SESSION_ADMIN_KEY)
+        )
+
         api_client_id = None
         api_client_label = None
         api_client_rec = None
@@ -91,7 +100,23 @@ class McpLiveTrackerMiddleware:
                         api_client_rec = rec
                         api_client_id = rec.id
                         api_client_label = rec.label
-                    break
+                        break
+                    # Bearer present but unknown: Auth middleware may have
+                    # already verified a now-deleted client, or the request
+                    # carries a stale token alongside an admin UI session.
+                    # Never continue as unbound when a Bearer was claimed —
+                    # that fail-opens the /mcp admin-tool gate.
+                    if admin_session:
+                        break
+                    logger.warning(
+                        "Bearer token on /mcp did not resolve to a client; "
+                        "rejecting (fail closed)"
+                    )
+                    response = JSONResponse(
+                        {"detail": "Invalid or revoked API client token."},
+                        status_code=401,
+                    )
+                    return await response(scope, receive, send)
                 except Exception:  # noqa: BLE001 - any store failure
                     if attempt == 1:
                         continue
@@ -111,11 +136,14 @@ class McpLiveTrackerMiddleware:
         tok_client = current_mcp_api_client.set(api_client_rec)
         tok_cid = current_mcp_api_client_id.set(api_client_id)
         tok_clabel = current_mcp_api_client_label.set(api_client_label)
+        tok_admin = current_mcp_admin_session.set(admin_session)
         if sess:
             # Stateful session handlers run in the session's own task and
             # cannot see the ContextVars set here; hand them the freshly
             # resolved client via the per-session slot (PR 5.8).
-            update_session_identity(sess, api_client_rec)
+            update_session_identity(
+                sess, api_client_rec, admin_session=admin_session
+            )
         try:
             if sess:
                 await self.tracker.touch(
@@ -133,3 +161,4 @@ class McpLiveTrackerMiddleware:
             current_mcp_api_client.reset(tok_client)
             current_mcp_api_client_id.reset(tok_cid)
             current_mcp_api_client_label.reset(tok_clabel)
+            current_mcp_admin_session.reset(tok_admin)

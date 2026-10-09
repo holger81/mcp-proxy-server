@@ -56,6 +56,7 @@ from mcp_proxy.live_mcp_tracker import (
     LiveMcpTracker,
     live_tool_span,
     resolve_current_api_client,
+    resolve_current_mcp_admin_session,
 )
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
@@ -108,6 +109,7 @@ _ADMIN_SERVER_ID = "mcp-tools-admin"
 # ``_call_tool_impl``. Every route to them (direct tools/call, ``callTool`` with
 # the ``mcp-tools-admin/…`` composite, popular-tool hot shortcuts) recurses into
 # that dispatch, so one gate at the top of ``_call_tool_impl`` covers all of them.
+# Keep in sync with ``_admin_tool_rows`` via ``_assert_admin_tool_catalog_sync``.
 _ADMIN_TOOL_NAMES = frozenset(
     {
         "listServers",
@@ -124,30 +126,56 @@ _ADMIN_TOOL_NAMES = frozenset(
 _warned_mcp_admin_calls: set[tuple[str, str]] = set()
 
 
-def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
-    """PR 38: /mcp admin tools require the client's ``can_admin`` scope.
+def _deny_mcp_admin_tool(name: str) -> None:
+    raise McpError(
+        mcp_types.ErrorData(
+            code=mcp_types.INVALID_PARAMS,
+            message=(
+                f"Admin tool {name!r} requires the can_admin scope on this "
+                "API client (or an admin UI session). Ask an administrator to "
+                "grant it in the proxy admin UI (Clients -> can_admin)."
+            ),
+        )
+    )
 
-    Mirrors the HTTP admin API (``require_admin_api``, since 4.2): an unbound
-    client means auth is disabled (single-user mode) and stays allowed. Warn-first
-    rollout per D4 — enforcement only when ``enforce_mcp_admin_tools`` is set;
-    otherwise log once per (client, tool) and let the call through.
+
+def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
+    """PR 38: /mcp admin tools require ``can_admin`` or an admin UI session.
+
+    Mirrors the HTTP admin API (``require_admin_api``, since 4.2):
+    - Admin UI session → allow (even if a plain Bearer is also present).
+    - ``can_admin`` bearer → allow.
+    - Auth disabled (no bound client, no admin session) → allow (single-user).
+    - Auth enabled + unbound identity → deny when enforcing (fail closed;
+      never treat a missing bind as "auth off").
+    Warn-first per D4 while ``enforce_mcp_admin_tools`` is false.
     """
     if name not in _ADMIN_TOOL_NAMES:
         return
+    if resolve_current_mcp_admin_session():
+        return
     client = resolve_current_api_client()
-    if client is None or client.can_admin:
+    if client is not None and client.can_admin:
+        return
+    if client is None and not settings.auth_enabled:
+        return
+    if client is None:
+        # Auth is on but this request has no admin session and no API client.
+        # Do not fail open (that used to let deleted-token races through).
+        if settings.enforce_mcp_admin_tools:
+            _deny_mcp_admin_tool(name)
+        key = ("<unbound>", name)
+        if key not in _warned_mcp_admin_calls:
+            _warned_mcp_admin_calls.add(key)
+            log.warning(
+                "Unbound /mcp request called proxy admin tool %r while auth is "
+                "enabled. Denying once enforce is on; check bearer bind / admin "
+                "session. Set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to enforce now.",
+                name,
+            )
         return
     if settings.enforce_mcp_admin_tools:
-        raise McpError(
-            mcp_types.ErrorData(
-                code=mcp_types.INVALID_PARAMS,
-                message=(
-                    f"Admin tool {name!r} requires the can_admin scope on this "
-                    "API client. Ask an administrator to grant it in the proxy "
-                    "admin UI (Clients -> can_admin)."
-                ),
-            )
-        )
+        _deny_mcp_admin_tool(name)
     key = (client.id, name)
     if key not in _warned_mcp_admin_calls:
         _warned_mcp_admin_calls.add(key)
@@ -675,7 +703,7 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
             "inputSchema": input_schema,
         }
 
-    return [
+    rows = [
         mk(
             "listServers",
             (
@@ -796,6 +824,15 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
             },
         ),
     ]
+    catalog = {str(r["_proxyUpstreamTool"]) for r in rows}
+    if catalog != _ADMIN_TOOL_NAMES:
+        missing = sorted(_ADMIN_TOOL_NAMES - catalog)
+        extra = sorted(catalog - _ADMIN_TOOL_NAMES)
+        raise RuntimeError(
+            "Admin tool catalog out of sync with _ADMIN_TOOL_NAMES "
+            f"(missing_from_rows={missing!r}, extra_in_rows={extra!r})."
+        )
+    return rows
 
 
 async def _collect_all_tool_defs(

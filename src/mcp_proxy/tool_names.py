@@ -59,9 +59,16 @@ def encode_proxy_tool_name(server_id: str, tool_name: str) -> str:
     # e.g. an empty tool name on a sid whose underscore form ends in the
     # marker, where the hex branch reads the empty payload back for another
     # server. The legacy "/" split happens before any "__p__" scanning and
-    # server ids can't contain "/", so this form round-trips whenever a
-    # non-empty tool name does.
-    return f"{server_id}/{tool_name}"
+    # server ids can't contain "/", so this form round-trips for non-empty
+    # tool names. Empty tool names cannot use "/" (decoder rejects empty
+    # segments) — raise rather than emit an undecodable wire.
+    legacy = f"{server_id}/{tool_name}"
+    if _decodes_exactly(legacy, server_id, tool_name):
+        return legacy
+    raise ValueError(
+        f"cannot encode proxy tool name for server_id={server_id!r} "
+        f"tool_name={tool_name!r} without a round-tripping wire form"
+    )
 
 
 def decode_proxy_tool_name(composite: str) -> tuple[str, str]:

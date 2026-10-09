@@ -183,11 +183,11 @@ def test_policy_change_applies_on_next_call(tmp_path):
         assert "searchTool" in _tool_names(client, sid, "tokA")
 
 
-def test_revoked_token_loses_client_identity_on_next_call(tmp_path):
-    """Revocation drops per-client policy immediately, not at re-initialize.
+def test_revoked_token_rejected_on_next_call(tmp_path):
+    """Revocation fails closed on the next /mcp request (no anonymous bind).
 
-    (The middleware's existing model for /mcp: an unresolvable bearer runs
-    anonymous — policy-free — exactly as a fresh stateless request would.)
+    A Bearer that no longer resolves must not continue unbound — that used to
+    fail-open the /mcp admin-tool gate. Expect HTTP 401 instead.
     """
     cstore = _ClientStore()
     cstore.by_token["tokA"] = _record("A", disabled=["callTool"])
@@ -198,7 +198,23 @@ def test_revoked_token_loses_client_identity_on_next_call(tmp_path):
         assert "callTool" not in _tool_names(client, sid, "tokA")
 
         cstore.by_token["tokA"] = None  # revoked
-        assert "callTool" in _tool_names(client, sid, "tokA")
+        r = client.post(
+            "/mcp",
+            headers={
+                "Authorization": "Bearer tokA",
+                "mcp-session-id": sid,
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+        assert r.status_code == 401
+        assert "revoked" in r.json()["detail"].lower() or "invalid" in r.json()["detail"].lower()
 
 
 def test_identity_slot_seeding_update_and_cleanup():

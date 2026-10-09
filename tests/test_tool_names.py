@@ -93,6 +93,18 @@ def test_legacy_spellings_still_decode() -> None:
     assert decode_proxy_tool_name("a__p__41") == ("a", "A")
 
 
+def test_encode_raises_when_no_round_trip_form_exists(monkeypatch) -> None:
+    """Last-resort legacy form must not emit undecodable wires (empty tool)."""
+    import mcp_proxy.tool_names as tn
+
+    def never_round_trips(wire: str, server_id: str, tool_name: str) -> bool:
+        return False
+
+    monkeypatch.setattr(tn, "_decodes_exactly", never_round_trips)
+    with pytest.raises(ValueError, match="cannot encode"):
+        encode_proxy_tool_name("srv", "")
+
+
 @pytest.mark.parametrize(("server_id", "tool_name"), ROUND_TRIP_CASES)
 def test_canonical_key_unifies_spellings(server_id: str, tool_name: str) -> None:
     canonical = canonical_tool_key(encode_proxy_tool_name(server_id, tool_name))

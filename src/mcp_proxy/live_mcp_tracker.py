@@ -32,6 +32,9 @@ current_mcp_api_client_id: ContextVar[str | None] = ContextVar(
 current_mcp_api_client_label: ContextVar[str | None] = ContextVar(
     "current_mcp_api_client_label", default=None
 )
+current_mcp_admin_session: ContextVar[bool] = ContextVar(
+    "current_mcp_admin_session", default=False
+)
 
 
 @dataclass(slots=True)
@@ -43,12 +46,13 @@ class SessionIdentity:
     when the session is created, so the middleware's per-request
     ``current_mcp_api_client`` never reaches handlers of an existing session.
     The manager registers one of these slots per session; the middleware
-    updates ``client`` from the *current* request's resolved bearer before each
-    request is dispatched, so token revocation and per-client policy changes
-    take effect on the next call instead of at re-initialize.
+    updates ``client`` / ``admin_session`` from the *current* request before
+    each request is dispatched, so token revocation and per-client policy
+    changes take effect on the next call instead of at re-initialize.
     """
 
     client: ApiClientRecord | None = None
+    admin_session: bool = False
 
 
 # session id -> live slot (only for stateful sessions while they run)
@@ -66,7 +70,10 @@ def session_identity_scope(session_id: str) -> Iterator[SessionIdentity]:
     Seed value is the *initializing* request's client (the caller's ContextVar
     is authoritative there); later requests update the slot in place.
     """
-    ident = SessionIdentity(client=current_mcp_api_client.get())
+    ident = SessionIdentity(
+        client=current_mcp_api_client.get(),
+        admin_session=current_mcp_admin_session.get(),
+    )
     _session_identities[session_id] = ident
     tok = _current_session_identity.set(ident)
     try:
@@ -78,12 +85,16 @@ def session_identity_scope(session_id: str) -> Iterator[SessionIdentity]:
 
 
 def update_session_identity(
-    session_id: str, client: ApiClientRecord | None
+    session_id: str,
+    client: ApiClientRecord | None,
+    *,
+    admin_session: bool = False,
 ) -> None:
     """Record the identity of the HTTP request currently being dispatched."""
     ident = _session_identities.get(session_id)
     if ident is not None:
         ident.client = client
+        ident.admin_session = bool(admin_session)
 
 
 def session_identity(session_id: str) -> SessionIdentity | None:
@@ -103,6 +114,18 @@ def resolve_current_api_client() -> ApiClientRecord | None:
     if ident is not None:
         return ident.client
     return current_mcp_api_client.get()
+
+
+def resolve_current_mcp_admin_session() -> bool:
+    """True when the current /mcp request authenticated via an admin UI session.
+
+    Mirrors ``require_admin_api``: an admin session grants admin tools even if a
+    plain (non-``can_admin``) Bearer is also present on the request.
+    """
+    ident = _current_session_identity.get()
+    if ident is not None:
+        return bool(ident.admin_session)
+    return bool(current_mcp_admin_session.get())
 
 
 def _now_ms() -> int:
