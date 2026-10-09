@@ -97,7 +97,18 @@ async def limited_get(
             content = bytes(body)
             request = response.request
             status = response.status_code
-            headers = response.headers
+            # ``aiter_bytes()`` already decompresses Content-Encoding (gzip,
+            # brotli, …). Rebuilding a Response with the original encoding
+            # headers makes httpx try to decode again → DecodingError
+            # ("incorrect header check") on virtually every real RSS feed.
+            headers = httpx.Headers(
+                [
+                    (k, v)
+                    for k, v in response.headers.multi_items()
+                    if k.lower()
+                    not in ("content-encoding", "content-length", "transfer-encoding")
+                ]
+            )
             extensions = response.extensions
 
     full = httpx.Response(

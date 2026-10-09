@@ -42,6 +42,38 @@ def test_small_body_returns_normally():
 
 
 @respx.mock
+def test_gzip_content_encoding_does_not_double_decode():
+    """Real feeds send Content-Encoding: gzip; aiter_bytes already decompresses.
+
+    Rebuilding the Response must drop encoding headers or httpx decompresses
+    again and raises DecodingError (incorrect header check).
+    """
+    import gzip
+
+    raw = WIRE_RSS.encode()
+    compressed = gzip.compress(raw)
+    respx.get("https://wire.test/gzip.xml").mock(
+        return_value=httpx.Response(
+            200,
+            headers={
+                "content-encoding": "gzip",
+                "content-length": str(len(compressed)),
+            },
+            content=compressed,
+        )
+    )
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            r = await limited_get(client, "https://wire.test/gzip.xml")
+        assert r.status_code == 200
+        assert r.content == raw
+        assert "content-encoding" not in {k.lower() for k in r.headers.keys()}
+
+    asyncio.run(run())
+
+
+@respx.mock
 def test_declared_content_length_rejected_before_download():
     respx.get("https://wire.test/big.xml").mock(
         return_value=httpx.Response(
