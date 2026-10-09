@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#40](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#41](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -382,6 +382,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | External-audit Critical #1: gate `/mcp` admin tools behind `can_admin` (warn-first, `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1` to deny) + drop public `/redoc` (`redoc_url=None`, gate `/redoc` defensively) (+9 tests) | `pr/mcp-admin-gating` (main) [#38] | ✅ CI green; merged `a7436f4` |
 | Auditor follow-up cleanup: `tool_names` encoder verifies its wire name decodes back to the exact `(server, tool)` pair (fixes `p__<hex>` lookalike self-collision, e.g. `a`+`p__41` vs `a--p`+`41`); decoder + stored keys unchanged. Node-inspect bind follow-up re-verified already fixed on main (`--inspect=0.0.0.0:{port}`, compose publishes only 9229) (+28 tests) | `pr/tool-names-self-collision` (main) [#39] | ✅ CI green; merged `349eed6` |
 | Compose pass-through for `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS` (stack env → container; default `false` = warn-first unchanged). Prod warn logs checked: 0 hits → ready to flip | `pr/enforce-admin-tools-env` (main) [#40] | ✅ CI green; merged `a863688` |
+| `getLogs` admin MCP tool (ring buffer, `limit` + case-insensitive `contains`; PR 38 gate applies) so admin-scoped MCP clients can verify warn-mode hits without shell access (+12 tests) | `pr/get-logs-tool` (main) [#41] | ✅ CI green; merged `41791da` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -442,5 +443,7 @@ self-collision cleanup (#39; the node-inspect follow-up was already satisfied
 on main), and the compose pass-through for the enforce flag (#40). One
 Portainer-side step remains: warn-mode logs showed 0 hits, so add
 `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1` to the stack env and redeploy, then spot-
-check that non-admin clients are denied the admin tools. Beyond that, see
+check that non-admin clients are denied the admin tools (PR #41's `getLogs`
+admin MCP tool surfaces the ring buffer over `/mcp`, so warn-mode hits can be
+checked without shell access). Beyond that, see
 "Explicitly deferred" for the parked backlog.
