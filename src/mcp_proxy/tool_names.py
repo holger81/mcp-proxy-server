@@ -5,6 +5,15 @@ clients (e.g. Cursor) using only [a-zA-Z0-9_]:
 
 - Descriptive: `serverid__upstream_tool` (hyphens in server id → underscores)
 - Fallback when the upstream name is not safely representable: `serverid__p__<hex utf-8 tool>`
+- Last resort for degenerate names even the hex form cannot represent (e.g. an
+  empty tool name on a server id whose underscore form ends in `__p`): legacy
+  `serverid/tool` — unambiguous because server ids can never contain `/`
+  (PR 39 self-collision cleanup)
+
+The encoder picks the first candidate that round-trips through
+``decode_proxy_tool_name`` back to the exact ``(server_id, tool_name)`` pair;
+the decoder itself is unchanged so wire names and stored policy keys from
+before this fix keep parsing identically.
 """
 
 from __future__ import annotations
@@ -29,12 +38,30 @@ def _hex_utf8_suffix_ok(s: str) -> bool:
     return True
 
 
+def _decodes_exactly(wire: str, server_id: str, tool_name: str) -> bool:
+    try:
+        return decode_proxy_tool_name(wire) == (server_id, tool_name)
+    except ValueError:
+        return False
+
+
 def encode_proxy_tool_name(server_id: str, tool_name: str) -> str:
     sid = server_id.replace("-", "_")
     if SAFE_TOOL_TAIL.fullmatch(tool_name) and PROXY_TOOL_SEP not in tool_name:
-        return f"{sid}__{tool_name}"
+        wire = f"{sid}__{tool_name}"
+        if _decodes_exactly(wire, server_id, tool_name):
+            return wire
     hx = tool_name.encode("utf-8").hex()
-    return f"{sid}{PROXY_TOOL_SEP}{hx}"
+    wire = f"{sid}{PROXY_TOOL_SEP}{hx}"
+    if _decodes_exactly(wire, server_id, tool_name):
+        return wire
+    # The candidate forms would decode to a different (server, tool) pair —
+    # e.g. an empty tool name on a sid whose underscore form ends in the
+    # marker, where the hex branch reads the empty payload back for another
+    # server. The legacy "/" split happens before any "__p__" scanning and
+    # server ids can't contain "/", so this form round-trips whenever a
+    # non-empty tool name does.
+    return f"{server_id}/{tool_name}"
 
 
 def decode_proxy_tool_name(composite: str) -> tuple[str, str]:
