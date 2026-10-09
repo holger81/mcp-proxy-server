@@ -24,6 +24,7 @@ from pydantic import AnyUrl
 
 from mcp_proxy.config_store import ServerConfigStore
 from mcp_proxy.html_plain_text import html_to_plain_text
+from mcp_proxy.log_buffer import get_ring_handler
 from mcp_proxy.domain_store import DomainStore
 from mcp_proxy.models import (
     UpstreamServer,
@@ -115,6 +116,7 @@ _ADMIN_TOOL_NAMES = frozenset(
         "registerManualStdioServer",
         "upgradeStdioServer",
         "removeServer",
+        "getLogs",
     }
 )
 
@@ -766,6 +768,31 @@ def _admin_tool_rows(settings: Settings) -> list[dict[str, Any]]:
                 "type": "object",
                 "properties": {"serverId": {"type": "string"}},
                 "required": ["serverId"],
+            },
+        ),
+        mk(
+            "getLogs",
+            (
+                "Read recent proxy log lines from the in-memory ring buffer "
+                "(same source as the admin UI Logs tab; resets on container restart). "
+                "Optional case-insensitive substring filter, e.g. contains='can_admin'."
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Max lines from the end of the buffer (default 200, max 1000)."
+                        ),
+                    },
+                    "contains": {
+                        "type": "string",
+                        "description": (
+                            "Only return lines containing this substring (case-insensitive)."
+                        ),
+                    },
+                },
             },
         ),
     ]
@@ -2129,13 +2156,42 @@ def build_proxy_mcp_server(
                 )
             ]
 
+        if name == "getLogs":
+            limit = args.get("limit", 200)
+            if limit is None:
+                limit = 200
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'limit' must be a positive integer.",
+                    )
+                )
+            contains = args.get("contains")
+            if contains is not None and not isinstance(contains, str):
+                raise McpError(
+                    mcp_types.ErrorData(
+                        code=mcp_types.INVALID_PARAMS,
+                        message="'contains' must be a string.",
+                    )
+                )
+            lines = get_ring_handler().get_lines(min(limit, 1000))
+            if contains:
+                needle = contains.lower()
+                lines = [ln for ln in lines if needle in ln.lower()]
+            if not lines:
+                text = "(no matching log lines)" if contains else "(log buffer empty)"
+            else:
+                text = "\n".join(lines)
+            return [mcp_types.TextContent(type="text", text=text)]
+
         raise McpError(
             mcp_types.ErrorData(
                 code=mcp_types.METHOD_NOT_FOUND,
                 message=(
                     f"Unknown tool {name!r}. Use searchToolsForDomain, searchTool, callTool, htmlToPlainText "
                     "(or a listed popular composite shortcut), or admin tools such as listServers / setServerEnabled / "
-                    "registerStdioServer / registerManualStdioServer / upgradeStdioServer / removeServer."
+                    "registerStdioServer / registerManualStdioServer / upgradeStdioServer / removeServer / getLogs."
                 ),
             )
         )
