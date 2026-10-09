@@ -49,6 +49,9 @@ services:
       # Startup is REFUSED when no password is set and the bind is non-loopback.
       # Set true only for a deliberate open deployment (trusted network).
       MCP_PROXY_ALLOW_NO_AUTH: ${MCP_PROXY_ALLOW_NO_AUTH:-false}
+      # PR #38: admin tools on /mcp require the client's can_admin scope.
+      # Warn-first default (log + allow); set 1 in Portainer stack env to deny.
+      MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS: ${MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS:-false}
       # Optional in .env: TZ=America/Denver (IANA). Uses zoneinfo for log timestamps; combine with localtime mount above.
       TZ: ${TZ:-}
       # LLM context caps — override in Portainer stack env or stack.env (0 = unlimited for *_MAX_CHARS).
