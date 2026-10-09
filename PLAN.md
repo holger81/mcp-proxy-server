@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#38](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#39](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -380,6 +380,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | Coordinated release: D4 flips 4.6b + 4.7b + 5.2b (warn-tests → flip/enforce tests) | `release/coordinated-flips` (main) [#36] | ✅ CI green incl. smoke; merged `b7534e8`; live deploy verified via Portainer (new image up, /admin CSP headers live) |
 | Hotfix: serve `login.js` unauthenticated — 7.2 broke admin login with auth on (+4 tests) | `fix/login-page-assets-public` (main) [#37] | ✅ CI green; merged `f9bcc09`; live login verified end-to-end (`POST /api/auth/login` 200, session cookie, `/admin/` + `app.js` 200) |
 | External-audit Critical #1: gate `/mcp` admin tools behind `can_admin` (warn-first, `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1` to deny) + drop public `/redoc` (`redoc_url=None`, gate `/redoc` defensively) (+9 tests) | `pr/mcp-admin-gating` (main) [#38] | ✅ CI green; merged `a7436f4` |
+| Auditor follow-up cleanup: `tool_names` encoder verifies its wire name decodes back to the exact `(server, tool)` pair (fixes `p__<hex>` lookalike self-collision, e.g. `a`+`p__41` vs `a--p`+`41`); decoder + stored keys unchanged. Node-inspect bind follow-up re-verified already fixed on main (`--inspect=0.0.0.0:{port}`, compose publishes only 9229) (+28 tests) | `pr/tool-names-self-collision` (main) [#39] | ✅ CI green; merged `349eed6` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -434,6 +435,10 @@ Notes for later PRs (learned while writing the harness/tests):
   4.7b bind policy would otherwise refuse to start.
 
 Done — the coordinated release (D4 flips) is live (#36), the post-release login
-hotfix (#37), and the external-audit follow-up gating `/mcp` admin tools behind
-`can_admin` with `/redoc` removed (#38). Nothing remains on the plan; see
-"Explicitly deferred" for the parked backlog.
+hotfix (#37), the external-audit follow-up gating `/mcp` admin tools behind
+`can_admin` with `/redoc` removed (#38), and the auditor's `tool_names`
+self-collision cleanup (#39; the node-inspect follow-up was already satisfied
+on main). One ops step remains: flip `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1` on
+the production container once the warn-mode log lines ("called proxy admin
+tool ... without the can_admin scope") show no affected clients. Beyond that,
+see "Explicitly deferred" for the parked backlog.
