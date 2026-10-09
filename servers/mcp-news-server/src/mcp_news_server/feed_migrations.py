@@ -16,12 +16,19 @@ URL_REPLACEMENTS: dict[str, str] = {
     "https://www.sfchronicle.com/bay-area/feed/": (
         "https://www.sfchronicle.com/rss/feed/Bay-Area-News-448.php"
     ),
+    # KQED retired /news/feed/rss (404); the legacy host still serves it.
+    "https://www.kqed.org/news/feed/rss": "https://ww2.kqed.org/news/feed/",
+    # DW renamed the Germany feed; the old name answers 200 + "no feed by that name".
+    "https://rss.dw.com/rdf/rss-en-germany": "https://rss.dw.com/rdf/rss-en-ger",
 }
 
 DISABLE_URLS: frozenset[str] = frozenset(
     {
         "https://www.mercurynews.com/feed/",
         "https://www.eastbaytimes.com/feed/",
+        # Chronicle bot-blocks every RSS fetch from this server (403 even with a
+        # browser User-Agent; Akamai fingerprinting).
+        "https://www.sfchronicle.com/rss/feed/Bay-Area-News-448.php",
     }
 )
 
