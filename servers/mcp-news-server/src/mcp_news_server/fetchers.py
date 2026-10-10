@@ -11,7 +11,11 @@ from typing import Any
 import feedparser
 import httpx
 
-from mcp_news_server.http_util import classify_error, limited_get
+from mcp_news_server.http_util import (
+    classify_error,
+    feed_deadline_s,
+    limited_get,
+)
 from mcp_news_server.models import FeedEntry, NewsItem
 
 log = logging.getLogger(__name__)
@@ -24,15 +28,24 @@ async def gather_rss_for_feeds(
     max_per: int,
     errors: list[dict[str, str]],
 ) -> list[NewsItem]:
-    """Concurrently fetch multiple feeds; errors are appended and do not abort other feeds."""
+    """Concurrently fetch multiple feeds; errors are appended and do not abort other feeds.
+
+    Each feed gets an overall deadline (``NEWS_MCP_FEED_DEADLINE_S``): httpx
+    only enforces per-read inactivity gaps, so one trickling connection must
+    not stall the whole digest refresh (and its lock) for minutes.
+    """
+    deadline = feed_deadline_s()
 
     async def fetch_one(f: FeedEntry) -> list[NewsItem]:
         try:
-            return await fetch_rss_via_http(
-                client,
-                f.url,
-                feed_label=f.label,
-                max_items=max_per,
+            return await asyncio.wait_for(
+                fetch_rss_via_http(
+                    client,
+                    f.url,
+                    feed_label=f.label,
+                    max_items=max_per,
+                ),
+                timeout=deadline,
             )
         except Exception as e:
             log.warning("feed fetch failed for %s: %s", f.url, e)

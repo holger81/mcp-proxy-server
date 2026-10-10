@@ -16,6 +16,10 @@ KTVU = "https://www.ktvu.com/rss.xml"
 MERCURY = "https://www.mercurynews.com/feed/"
 OLD_CHRONICLE = "https://www.sfchronicle.com/bay-area/feed/"
 NEW_CHRONICLE = "https://www.sfchronicle.com/rss/feed/Bay-Area-News-448.php"
+KQED_OLD = "https://www.kqed.org/news/feed/rss"
+KQED_NEW = "https://ww2.kqed.org/news/feed/"
+DW_OLD = "https://rss.dw.com/rdf/rss-en-germany"
+DW_NEW = "https://rss.dw.com/rdf/rss-en-ger"
 
 
 @pytest.fixture
@@ -77,3 +81,48 @@ def test_url_replacement_is_one_shot(store: FeedStore):
     # Deliberate later re-add of the old URL is left alone (migration applied).
     store.add(OLD_CHRONICLE, "Legacy")
     assert OLD_CHRONICLE in urls(store.load())
+
+
+def test_dead_feed_url_replacements(store: FeedStore):
+    # PR 42: KQED moved to the legacy host, DW renamed its Germany feed.
+    store._path.write_text(
+        "feeds:\n"
+        f"- url: {KQED_OLD}\n  label: KQED\n  enabled: true\n"
+        f"- url: {DW_OLD}\n  label: DW Germany\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    loaded = store.load()
+    got = urls(loaded)
+    assert KQED_OLD not in got and KQED_NEW in got
+    assert DW_OLD not in got and DW_NEW in got
+    data = yaml.safe_load((store.data_dir / "feeds.yaml").read_text(encoding="utf-8"))
+    assert f"url-replacement:{KQED_OLD}" in data["migrations_applied"]
+    assert f"url-replacement:{DW_OLD}" in data["migrations_applied"]
+
+
+def test_blocked_chronicle_feed_disabled_once(store: FeedStore):
+    # PR 42: SF Chronicle bot-blocks RSS (403 for every fetch from this server).
+    store.save([FeedEntry(url=NEW_CHRONICLE, label="Chronicle", enabled=True)])
+    loaded = store.load()
+    assert next(f for f in loaded if f.url == NEW_CHRONICLE).enabled is False
+
+    # User re-enables it (same semantics as decision D1): stays enabled.
+    store.save(
+        [
+            FeedEntry(url=f.url, label=f.label, enabled=True)
+            if f.url == NEW_CHRONICLE
+            else f
+            for f in loaded
+        ]
+    )
+    assert next(f for f in store.load() if f.url == NEW_CHRONICLE).enabled is True
+
+
+def test_new_default_urls_pass_region_heuristics():
+    # Digest scoping must still classify the replacement URLs correctly.
+    from mcp_news_server.feed_regions import feed_is_bay_area, feed_is_germany
+
+    assert feed_is_bay_area(FeedEntry(url=KQED_NEW, label="", enabled=True))
+    assert feed_is_germany(FeedEntry(url=DW_NEW, label="", enabled=True))
+    # prefix hint also keeps matching the old feed name for custom stores
+    assert feed_is_germany(FeedEntry(url=DW_OLD, label="", enabled=True))

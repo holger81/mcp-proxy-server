@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from urllib.parse import urljoin
@@ -26,6 +27,22 @@ def http_timeout_s() -> float:
         return max(5.0, min(120.0, float(raw)))
     except ValueError:
         return 25.0
+
+
+def feed_deadline_s() -> float:
+    """Overall wall-clock deadline for fetching one feed.
+
+    httpx's timeouts are per-operation inactivity gaps, so a connection that
+    trickles a few bytes per second never trips them and can hold a whole
+    digest refresh (and its lock) open indefinitely.
+    """
+    raw = os.environ.get("NEWS_MCP_FEED_DEADLINE_S", "").strip()
+    if not raw:
+        return 90.0
+    try:
+        return max(5.0, min(600.0, float(raw)))
+    except ValueError:
+        return 90.0
 
 
 def async_client() -> httpx.AsyncClient:
@@ -60,13 +77,43 @@ async def limited_get(
       ``Content-Length``, mid-stream on accumulated bytes (missing/lying header);
     - follows redirects manually (httpx 0.28 has no redirect event hook) so
       every hop is re-validated by :func:`assert_safe_public_url`; a public
-      URL may not redirect us into an internal one.
+      URL may not redirect us into an internal one;
+    - retries once with ``Accept-Encoding: identity`` when a body arrives
+      tagged as compressed but is undecodable (transient CDN/network corruption
+      observed as bursts of ``DecodingError``; the uncompressed retry rides
+      past those windows).
+
+    If the identity retry also fails, the error propagates unchanged.
     """
+    try:
+        return await _limited_get_once(client, url, params=params, max_bytes=max_bytes)
+    except httpx.DecodingError:
+        return await _limited_get_once(
+            client,
+            url,
+            params=params,
+            max_bytes=max_bytes,
+            headers={"Accept-Encoding": "identity"},
+        )
+
+
+async def _limited_get_once(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
     current_url = url
     current_params = params
     for hop in range(MAX_REDIRECTS + 1):
         async with client.stream(
-            "GET", current_url, params=current_params, follow_redirects=False
+            "GET",
+            current_url,
+            params=current_params,
+            headers=headers,
+            follow_redirects=False,
         ) as response:
             if response.has_redirect_location and hop < MAX_REDIRECTS:
                 next_url = urljoin(
@@ -101,7 +148,9 @@ async def limited_get(
             # brotli, …). Rebuilding a Response with the original encoding
             # headers makes httpx try to decode again → DecodingError
             # ("incorrect header check") on virtually every real RSS feed.
-            headers = httpx.Headers(
+            # (325a7cf) Strip those headers here; keep the name distinct from
+            # the per-request ``headers`` parameter used on retry hops.
+            response_headers = httpx.Headers(
                 [
                     (k, v)
                     for k, v in response.headers.multi_items()
@@ -110,10 +159,15 @@ async def limited_get(
                 ]
             )
             extensions = response.extensions
+        # Body fully read: leave the redirect loop. Without this break the
+        # loop silently re-issued the request MAX_REDIRECTS+1 times per
+        # successful GET (production: 21x traffic per feed refresh, tripping
+        # CDN rate limits and corrupting bodies).
+        break
 
     full = httpx.Response(
         status_code=status,
-        headers=headers,
+        headers=response_headers,
         content=content,
         request=request,
         extensions=extensions,
@@ -132,7 +186,7 @@ def classify_error(e: BaseException) -> str:
         return "response_too_large"
     if isinstance(e, UrlBlockedError):
         return "url_blocked"
-    if isinstance(e, httpx.TimeoutException):
+    if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)):
         return "timeout"
     if isinstance(e, httpx.TooManyRedirects):
         return "too_many_redirects"

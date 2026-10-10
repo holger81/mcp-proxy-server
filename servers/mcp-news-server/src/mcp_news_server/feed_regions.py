@@ -5,7 +5,7 @@ from mcp_news_server.models import FeedEntry
 _GERMANY_LABEL_MARKERS = ("[germany]", "germany —", "germany -")
 _GERMANY_URL_HINTS = (
     "tagesschau.de",
-    "rss-en-germany",
+    "rss-en-ger",  # prefix: matches both rss-en-ger and rss-en-germany
     "rss.deutschland",
     "thema/deutschland",
     "germany/index~rss",

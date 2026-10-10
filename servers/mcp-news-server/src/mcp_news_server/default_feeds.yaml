@@ -27,7 +27,7 @@ feeds:
     enabled: true
 
   # --- Germany ---
-  - url: "https://rss.dw.com/rdf/rss-en-germany"
+  - url: "https://rss.dw.com/rdf/rss-en-ger"
     label: "[Germany] Deutsche Welle — Germany (EN)"
     enabled: true
   - url: "https://www.tagesschau.de/index~rss2.xml"
@@ -43,14 +43,13 @@ feeds:
     enabled: true
 
   # --- San Francisco Bay Area / South Bay (local digest: news_local) ---
-  # Mercury News / East Bay Times block automated RSS (403); use TV/regional feeds below.
+  # Mercury News / East Bay Times block automated RSS (403); SF Chronicle
+  # bot-blocks every fetch (403 even with a browser UA) and was dropped via a
+  # one-shot migration. Use TV/regional feeds below.
   - url: "https://sanjosespotlight.com/feed/"
     label: "[San Jose] San José Spotlight"
     enabled: true
-  - url: "https://www.sfchronicle.com/rss/feed/Bay-Area-News-448.php"
-    label: "[Bay Area] San Francisco Chronicle — Bay Area"
-    enabled: true
-  - url: "https://www.kqed.org/news/feed/rss"
+  - url: "https://ww2.kqed.org/news/feed/"
     label: "[Bay Area] KQED — News"
     enabled: true
   - url: "https://www.nbcbayarea.com/?rss=y"

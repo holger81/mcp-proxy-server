@@ -74,7 +74,15 @@ def attach_ring_logging() -> None:
         except Exception:
             pass
     h = _ring_handler
-    for name in ("mcp_proxy", "uvicorn", "uvicorn.error", "uvicorn.access"):
+    # ``mcp_news_server`` runs in-process for the digest refresher loop, so its
+    # feed-fetch warnings only reach this ring (and getLogs) if attached here.
+    for name in (
+        "mcp_proxy",
+        "mcp_news_server",
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+    ):
         lg = logging.getLogger(name)
         lg.setLevel(logging.INFO)
         if not any(type(x) is RingLogHandler for x in lg.handlers):

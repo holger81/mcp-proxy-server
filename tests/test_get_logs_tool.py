@@ -17,7 +17,7 @@ from mcp import types as mcp_types
 import mcp_proxy.proxy_mcp as pm
 from mcp_proxy.client_store import ApiClientRecord
 from mcp_proxy.live_mcp_tracker import current_mcp_api_client
-from mcp_proxy.log_buffer import get_ring_handler
+from mcp_proxy.log_buffer import RingLogHandler, get_ring_handler
 from mcp_proxy.models import UpstreamServer
 from mcp_proxy.settings import Settings
 from mcp_proxy.tool_call_stats import ToolCallStatsStore
@@ -207,3 +207,23 @@ async def test_discovery_row_present(tmp_path):
         pm._ADMIN_SERVER_ID,
         "getLogs",
     )
+
+
+def test_attach_ring_logging_covers_news_server_logger():
+    """PR 42: the in-process digest refresher logs under ``mcp_news_server``;
+    its feed-fetch warnings must reach the ring (and getLogs)."""
+    from mcp_proxy.log_buffer import attach_ring_logging
+
+    attach_ring_logging()
+    parent = logging.getLogger("mcp_news_server")
+    assert any(type(h) is RingLogHandler for h in parent.handlers)
+
+    ring = get_ring_handler()
+    before = len(ring.get_lines())
+    # child logger (propagates to the attached parent)
+    logging.getLogger("mcp_news_server.fetchers").warning(
+        "feed fetch failed for https://unit.test/rss"
+    )
+    lines = ring.get_lines()
+    assert len(lines) == before + 1
+    assert "feed fetch failed for https://unit.test/rss" in lines[-1]
