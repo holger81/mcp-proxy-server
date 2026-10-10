@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#41](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#42](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -383,6 +383,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | Auditor follow-up cleanup: `tool_names` encoder verifies its wire name decodes back to the exact `(server, tool)` pair (fixes `p__<hex>` lookalike self-collision, e.g. `a`+`p__41` vs `a--p`+`41`); decoder + stored keys unchanged. Node-inspect bind follow-up re-verified already fixed on main (`--inspect=0.0.0.0:{port}`, compose publishes only 9229) (+28 tests) | `pr/tool-names-self-collision` (main) [#39] | ✅ CI green; merged `349eed6` |
 | Compose pass-through for `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS` (stack env → container; default `false` = warn-first unchanged). Prod warn logs checked: 0 hits → ready to flip | `pr/enforce-admin-tools-env` (main) [#40] | ✅ CI green; merged `a863688` |
 | `getLogs` admin MCP tool (ring buffer, `limit` + case-insensitive `contains`; PR 38 gate applies) so admin-scoped MCP clients can verify warn-mode hits without shell access (+12 tests) | `pr/get-logs-tool` (main) [#41] | ✅ CI green; merged `41791da` |
+| News digest outage follow-up: `limited_get` redirect loop lacked a `break` after a full read → every successful GET re-issued itself 21x (CDN 429s + corrupted-body bursts; complements main's `325a7cf` double-decode fix). Adds one-shot identity retry on `DecodingError`, per-feed overall deadline (`NEWS_MCP_FEED_DEADLINE_S`, default 90 s), one-shot feed migrations (KQED → `ww2.kqed.org/news/feed/`, DW → `rss-en-ger`, SF Chronicle disabled 403), and ring logging for the `mcp_news_server` logger so refresher feed warnings reach `getLogs` (+14 tests) | `pr/news-feed-resilience` (main, rebased on `325a7cf`) [#42] | ✅ CI green; merged `2d0d9b6` |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
@@ -399,6 +400,8 @@ Notes for later PRs (learned while writing the harness/tests):
 - `news_briefing` schema takes `scope` (enum, `additionalProperties: false`), so its internal "not full" branch is unreachable via the tool API.
 - `migrate_feeds` is one-shot per item via `migrations_applied` ids since PR 2.2 — the 3 supplemental Bay Area feeds appear on **first** load only; digest tests get them from the seeded store file (respx catch-all still needed).
 - httpx ≥ 0.28 has **no** `on_redirect` event hook (unknown hook keys are silently dropped) — redirect interception lives in `limited_get`'s manual hop loop now.
+- `limited_get`'s manual hop loop must `break` after a full read — without it the `for hop in ...` loop silently re-issued every successful GET 21x (PR #42; production CDN abuse).
+- `httpx.Response(content=..., headers={"content-encoding": ...})` **decodes eagerly in the constructor** (0.28) — build undecodable test responses with `stream=` instead, and strip encoding headers when rebuilding decompressed bodies (`325a7cf`).
 - Python ≥ 3.14 `ipaddress.is_private` excludes CGNAT `100.64.0.0/10` — check ranges explicitly in `url_guard`.
 - Since PR 4.2 (`e77edb8`, **live**): plain bearer tokens get **403** on `/api/servers/*` and `/api/catalog/*` (was 200). MCP endpoint got the same treatment for **admin tools** only, via PR #38 (`a7436f4`): warn-first default, flip with `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1`. Grant per-client via Admin → Clients → "Admin API access" or `PATCH /api/clients/{id} {"can_admin":true}` (admin session).
 - `Settings` tests: session secret needs ≥16 chars whenever `admin_password` is set (model validator).
