@@ -226,7 +226,7 @@ class DigestCache:
                 if base and qs:
                     from mcp_news_server.fetchers import searx_search
 
-                    cats = _local_searx_categories()
+                    cats = _local_searx_categories() or "news"
 
                     async def one(q: str) -> list[NewsItem]:
                         try:

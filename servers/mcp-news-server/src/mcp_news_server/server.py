@@ -331,7 +331,8 @@ def build_tool_list() -> list[mcp_types.Tool]:
             name="news_searx_search",
             description=(
                 "Query a SearXNG instance (JSON). Use `searx_base_url` or set env `SEARXNG_BASE_URL`. "
-                "Returns title, url, snippet, optional published date."
+                "Returns title, url, snippet, optional published date. Searches the news category "
+                "unless `categories` says otherwise."
             ),
             inputSchema={
                 "type": "object",
@@ -346,7 +347,7 @@ def build_tool_list() -> list[mcp_types.Tool]:
                     },
                     "categories": {
                         "type": "string",
-                        "description": "Optional SearXNG categories param (e.g. news).",
+                        "description": 'SearXNG categories param. Defaults to "news".',
                     },
                     "searx_base_url": {
                         "type": "string",
@@ -423,7 +424,10 @@ def build_tool_list() -> list[mcp_types.Tool]:
                     },
                     "searx_categories": {
                         "type": "string",
-                        "description": "Optional categories param for every SearX query (e.g. news).",
+                        "description": (
+                            "Optional categories param for every SearX query. "
+                            'Defaults to "news".'
+                        ),
                     },
                     "extra_urls": {
                         "type": "array",
@@ -529,6 +533,11 @@ def build_news_server() -> Server:
                 raise _err("Missing or invalid 'query'.")
             limit = _int(args, "limit", 15, min_v=1, max_v=50)
             categories = _optional_str(args, "categories")
+            if not categories:
+                # An unscoped query hits SearXNG's *general* category — the least
+                # reliable engine pool on self-hosted instances (CAPTCHA/429
+                # storms) and not what a news tool should default to.
+                categories = "news"
             # D2: the tool *parameter* is guarded; the operator env var is trusted.
             base_param = _optional_str(args, "searx_base_url")
             if base_param:
@@ -685,6 +694,10 @@ def build_news_server() -> Server:
                     searx_to_run = _local_searx_queries()
                     if searx_cat_eff is None:
                         searx_cat_eff = _local_searx_categories()
+                if searx_to_run and searx_cat_eff is None:
+                    # Same rationale as news_searx_search: a news digest must not
+                    # fall through to SearXNG's flaky general category.
+                    searx_cat_eff = "news"
 
                 if searx_to_run:
                     if not searx_base:
