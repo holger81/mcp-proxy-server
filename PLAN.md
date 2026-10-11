@@ -338,7 +338,7 @@ script). Tests pin CSP values and ban inline `<script>`/`on*=` in the HTML.
 
 ## Progress log
 
-PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#43](https://github.com/holger81/mcp-proxy-server/pulls).
+PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)–[#44](https://github.com/holger81/mcp-proxy-server/pulls).
 
 | PR | Branch (base) | State |
 |---|---|---|
@@ -385,6 +385,7 @@ PRs (stacked bases): [#1](https://github.com/holger81/mcp-proxy-server/pull/1)�
 | `getLogs` admin MCP tool (ring buffer, `limit` + case-insensitive `contains`; PR 38 gate applies) so admin-scoped MCP clients can verify warn-mode hits without shell access (+12 tests) | `pr/get-logs-tool` (main) [#41] | ✅ CI green; merged `41791da` |
 | News digest outage follow-up: `limited_get` redirect loop lacked a `break` after a full read → every successful GET re-issued itself 21x (CDN 429s + corrupted-body bursts; complements main's `325a7cf` double-decode fix). Adds one-shot identity retry on `DecodingError`, per-feed overall deadline (`NEWS_MCP_FEED_DEADLINE_S`, default 90 s), one-shot feed migrations (KQED → `ww2.kqed.org/news/feed/`, DW → `rss-en-ger`, SF Chronicle disabled 403), and ring logging for the `mcp_news_server` logger so refresher feed warnings reach `getLogs` (+14 tests) | `pr/news-feed-resilience` (main, rebased on `325a7cf`) [#42] | ✅ CI green; merged `2d0d9b6` |
 | SearXNG audit follow-up: `news_searx_search` + `news_curate` + local-digest refresher now default to `categories="news"` (unscoped queries hit SearXNG's general category, whose engines CAPTCHA/429 home-IP instances → `items: []`); explicit overrides win; `fetchers.searx_search` stays generic (+4 tests). Ops-side (not in git): npm `mcp-searxng` env renamed `SEARXNG_BASE_URL`→`SEARXNG_URL` (the package's actual var; tool was 100% broken before), SearXNG settings.yml disables blocked general engines (brave/duckduckgo/karmasearch×2/aol/startpage) and enables Bing — general search verified working again | `pr/searx-default-news` (main) [#43] | ✅ CI green; merged `30d038c` |
+| Compose: activate the `NEWS_MCP_LLM_*` passthrough block (was commented out → Portainer stack env could never enable the curator) + add `NEWS_MCP_LLM_INPUT_MAX` / `NEWS_MCP_LLM_TIMEOUT_S`; empty-model default keeps the curator off until the stack env supplies values. Ops-side: curator pointed at llama.cpp router `http://192.168.10.31:9292/v1`, model `Qwen3.8-Flash-Next-Strix` (already-resident 27B, no extra RAM; user's pick over loading an 8B on a 107/123 GiB box), `TIMEOUT_S=300` (queueing behind interactive turns; probe: valid curated JSON in 146 s incl. queue). `mcp-news` servers.json env updated via admin tool; Portainer stack env values = user UI step (git-based stack — no safe MCP write path for stack env); stack env vars: `NEWS_MCP_LLM_MODEL=Qwen3.8-Flash-Next-Strix`, `NEWS_MCP_LLM_BASE_URL=http://192.168.10.31:9292/v1`, `NEWS_MCP_LLM_TIMEOUT_S=300` + Portainer redeploy | `feat/compose-llm-curation-passthrough` (main) [#44] | ✅ CI green; merged `032b1ac`; passthrough env verified in live container (empty defaults) |
 
 **Merge order constraint:** 1.3 modifies `tests/test_characterization_fetchers.py`
 from PR 0.3 — merge 0.3 first. Everything else is independent of each other.
