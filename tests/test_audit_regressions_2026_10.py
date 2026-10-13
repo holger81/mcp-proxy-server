@@ -277,24 +277,36 @@ class _FakeServerStore:
 
 
 def test_put_restores_masked_sentinels_from_store() -> None:
+    # stdio servers carry env (the model validator clears headers); http
+    # servers carry headers — exercise each field on its own transport.
     stored = UpstreamServer(
-        id="srv",
-        type="stdio",
-        command=["x"],
-        env={"TOKEN": "real"},
-        headers={"H": "keep-me"},
+        id="srv", type="stdio", command=["x"], env={"TOKEN": "real"}
     )
     body = UpstreamServer(
         id="srv",
         type="stdio",
         command=["x"],
         env={"TOKEN": "********", "NEW": "plain"},
-        headers={"H": "********"},
     )
     req = _req(bearer="t", store=_FakeServerStore(stored))
     merged = _restore_masked_fields(req, body)
     assert merged.env == {"TOKEN": "real", "NEW": "plain"}
-    assert merged.headers == {"H": "keep-me"}
+
+    stored_h = UpstreamServer(
+        id="srv",
+        type="http",
+        url="http://internal:1/mcp",
+        headers={"H": "keep-me"},
+    )
+    body_h = UpstreamServer(
+        id="srv",
+        type="http",
+        url="http://internal:1/mcp",
+        headers={"H": "********"},
+    )
+    req_h = _req(bearer="t", store=_FakeServerStore(stored_h))
+    merged_h = _restore_masked_fields(req_h, body_h)
+    assert merged_h.headers == {"H": "keep-me"}
 
 
 def test_put_restore_leaves_session_payload_alone() -> None:
