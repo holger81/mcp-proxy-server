@@ -323,9 +323,15 @@ Both admin endpoints above require an **admin session**.
 
 ### Node.js stdio debugging (`--inspect`)
 
-For **stdio** servers whose command starts with `node`, the admin **Edit server** form can enable **Node inspector** (injects `--inspect=0.0.0.0:9229` or `--inspect-brk=0.0.0.0:9229`). The listen address is always `0.0.0.0` so you can attach from the host when using Docker.
+For **stdio** servers whose command starts with `node`, the admin **Edit server** form can enable **Node inspector** (injects `--inspect=HOST:9229` or `--inspect-brk=HOST:9229`). `HOST` is `MCP_PROXY_NODE_INSPECT_HOST` and defaults to **`127.0.0.1`** — on the bare host that keeps the DevTools endpoint local; inside Docker you additionally need the env override below (port mappings do not reach a container's loopback).
 
-With the bundled `docker-compose.yml`, **host port `9229`** maps to the container inspector on **`9229`** only. Enable inspector under **Admin → Edit server**, then attach with Chrome (`chrome://inspect`) or your IDE **Attach to Node** at `localhost:9229`. Omit this mapping if you do not run debuggers (or override `ports:` in `docker-compose.override.yml`).
+> 🔴 **Hardening (2026-10 audit, SEC-3):** the bundled `docker-compose.yml` no longer publishes `9229` at all. The DevTools protocol is unauthenticated — publishing it exposed arbitrary code execution with every key in `/data` to the LAN. For a debug session, layer the opt-in override (host binding stays `127.0.0.1`):
+>
+> ```sh
+> docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+> ```
+>
+> Enable the inspector under **Admin → Edit server**, then attach with Chrome (`chrome://inspect`) or your IDE at `127.0.0.1:9229`. Remove the `-f docker-compose.debug.yml` layer when done. The port is fixed: only one inspected server can be attached at a time.
 
 ---
 ## 🔐 Authentication
@@ -354,13 +360,17 @@ Then:
 > `MCP_PROXY_SESSION_SECRET`), or `MCP_PROXY_ALLOW_NO_AUTH=true` for a deliberate open
 > deployment, or bind to `127.0.0.1`. (Warned since the previous release.)
 
-Two related default flips shipped in the same release:
+Three related default flips shipped in the same release:
 
 - `MCP_PROXY_ALLOW_PYPI_INSTALL` / `MCP_PROXY_ALLOW_NPM_INSTALL` now default to **false** —
   package installs from the admin UI/tools are opt-in; set them to `true` to keep installs.
 - `MCP_PROXY_PROPAGATE_TOOL_ERRORS` now defaults to **true** — upstream tool failures reach
   clients as proper `isError` results (with `structuredContent` forwarded) instead of
   successful-looking text. Set it to `false` to restore the old masking.
+- `MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS` now defaults to **true** — proxy admin tools
+  (`mcp-tools-admin__*`) on `/mcp` require the bearer client's **Admin API access** scope;
+  without it the call is denied instead of merely logged. Set `0`/`false` for warn-only.
+  Auth-disabled deployments are unaffected.
 
 ---
 ## ⚙️ Environment Variables
@@ -379,6 +389,15 @@ Two related default flips shipped in the same release:
 | MCP_PROXY_SECURE_COOKIES | false | Set true behind HTTPS |
 | MCP_PROXY_SAFE_TOOL_NAMES | true | When true, composite upstream tool names in discovery use only letters, digits, and underscores (strict MCP clients), e.g. `email__list_emails`. Names that need other characters fall back to a hex suffix after `__p__`. Set false to expose legacy `server/tool` names in discovery (callTool still accepts both forms). |
 | MCP_PROXY_TOOL_LIST_CACHE_TTL_S | 30 | How long a server's upstream `tools/list` result is cached for discovery. Edits in the admin UI invalidate that server immediately (the cache key includes the config), and a failed upstream is retried on the next discovery. Set `0` to disable caching (every discovery connects to every upstream again). |
+| MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS | true | Deny proxy admin tools (`mcp-tools-admin__*`) on `/mcp` unless the bearer client has the `can_admin` scope (default flipped from warn-only in the 2026-10 audit fixes — set `0` to log-and-allow). |
+| MCP_PROXY_CORS_ALLOW_ORIGINS | (empty) | Comma-separated origins allowed for the CORS middleware (audit M-12: `*` was previously unconditional). Empty — the default — adds no CORS middleware; cross-origin browser calls are then blocked by the browser itself. Set explicitly (e.g. `https://admin.example`) to opt in; `*` is a deliberate choice. |
+
+> **Supply chain (audit M-9):** the baked mail-mcp release binary is only downloaded
+> from GitHub at build time. Set the optional build arg/env `MAIL_MCP_SHA256`
+> (Dockerfile / compose `args:`) and `PORTAINER_MCP_SHA256` (env for
+> `docker/install-*-release.sh`) to the sha256 of the release tarballs; when set,
+> a checksum mismatch fails the build/install. Without them the download is
+> unverified (a warning is printed).
 
 > **Discovery freshness:** after you change a server's config, or after an
 > install/upgrade through the proxy, the new tool list is picked up on the next

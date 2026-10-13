@@ -19,7 +19,7 @@ from mcp_proxy.live_mcp_tracker import (
     current_mcp_user_agent,
     update_session_identity,
 )
-from mcp_proxy.security import SESSION_ADMIN_KEY
+from mcp_proxy.security import SESSION_ADMIN_KEY, is_mcp_http_path
 
 logger = logging.getLogger("mcp_proxy.auth")
 
@@ -30,10 +30,6 @@ def _bearer_from_headers(hdrs: dict[str, str]) -> str | None:
         return None
     tok = auth[7:].strip()
     return tok or None
-
-
-def _is_mcp_http_path(path: str) -> bool:
-    return path == "/mcp" or path.startswith("/mcp/")
 
 
 def _header_map(scope: Scope) -> dict[str, str]:
@@ -62,7 +58,7 @@ class McpLiveTrackerMiddleware:
         self.client_store = client_store
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or not _is_mcp_http_path(
+        if scope.get("type") != "http" or not is_mcp_http_path(
             scope.get("path") or ""
         ):
             await self.app(scope, receive, send)

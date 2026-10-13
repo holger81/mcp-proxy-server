@@ -200,7 +200,13 @@ class ClientTokenStore:
                 if llm_limits is not None:
                     c.llm_limits = llm_limits
                 if disabled_tools is not None:
-                    c.disabled_tools = disabled_tools
+                    # Direct attribute assignment bypasses pydantic validators
+                    # (validate_assignment is off), so run the normalizer here
+                    # too — otherwise update() stores non-canonical spellings
+                    # and the disabled-tool match silently misses (audit L-5).
+                    c.disabled_tools = ApiClientRecord.normalize_disabled_tools(
+                        disabled_tools
+                    )
                 if instructions is not None:
                     c.instructions = instructions.strip()[:12000]
                 if can_admin is not None:

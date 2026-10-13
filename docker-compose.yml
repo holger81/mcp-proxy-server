@@ -6,13 +6,19 @@ services:
       args:
         # Pin https://github.com/tecnologicachile/mail-mcp Linux amd64 release baked into /opt/mail-mcp/
         MAIL_MCP_VERSION: ${MAIL_MCP_VERSION:-v0.4.5}
+        # Audit M-9: optional sha256 of the release tarball above; set in .env
+        # to fail the build when the GitHub asset changes underneath the pin.
+        # MAIL_MCP_SHA256: ${MAIL_MCP_SHA256:-}
     # Local tag only — not on Docker Hub. Prevents `compose pull` / Portainer “Pull” from hitting the registry.
     image: mcp-proxy:latest
     pull_policy: never
     ports:
       - "2222:8080"
-      # Node.js --inspect: publish only the default inspector port (9229).
-      - "9229:9229/tcp"
+      # Audit SEC-3: the Node.js inspector (per-server "stdio node inspect"
+      # toggle) binds 0.0.0.0:9229 INSIDE the container; publishing it by
+      # default exposed the unauthenticated DevTools protocol (= arbitrary
+      # code execution with every API key in /data) on the host LAN. It is no
+      # longer published — opt in via docker-compose.debug.yml (loopback only).
     volumes:
       - mcp-proxy-data:/data
       # TLS: drop *.pem / *.crt here (gitignored); merged into OS trust store at container start (mail-mcp IMAP/SMTP).
@@ -55,8 +61,9 @@ services:
       # Set true only for a deliberate open deployment (trusted network).
       MCP_PROXY_ALLOW_NO_AUTH: ${MCP_PROXY_ALLOW_NO_AUTH:-false}
       # PR #38: admin tools on /mcp require the client's can_admin scope.
-      # Warn-first default (log + allow); set 1 in Portainer stack env to deny.
-      MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS: ${MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS:-false}
+      # Audit M-8: default flipped to ENFORCE (deny without scope); set 0 to
+      # return to warn-only. Fresh installs are safe by default.
+      MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS: ${MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS:-true}
       # Optional in .env: TZ=America/Denver (IANA). Uses zoneinfo for log timestamps; combine with localtime mount above.
       TZ: ${TZ:-}
       # LLM context caps — override in Portainer stack env or stack.env (0 = unlimited for *_MAX_CHARS).
@@ -71,6 +78,14 @@ services:
       MCP_PROXY_TOOL_DISCOVERY_COMPACT_JSON: ${MCP_PROXY_TOOL_DISCOVERY_COMPACT_JSON:-false}
       MCP_PROXY_INSTRUCTIONS_MAX_CHARS: ${MCP_PROXY_INSTRUCTIONS_MAX_CHARS:-0}
     restart: unless-stopped
+    # Audit L-15: the header comment always promised a healthcheck; here it is.
+    # /api/health stays public even with auth enabled (see settings.py).
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   mcp-proxy-data:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import sys
 import uuid
@@ -35,6 +34,9 @@ from mcp_proxy.stdio_node_inspect import stdio_effective_command
 log = logging.getLogger(__name__)
 
 InspectKind = Literal["tools", "resources", "prompts", "capabilities"]
+
+# Audit L-2: max characters of upstream stderr kept in memory per session.
+_STDERR_CAPTURE_CAP_CHARS = 200_000
 
 
 class _SimplePostUnsupported(Exception):
@@ -214,7 +216,11 @@ async def _stdio_client_piped_stderr_capture(
             await anyio.lowlevel.checkpoint()
 
     async def stderr_reader() -> None:
-        capture = io.StringIO()
+        # Audit L-2: cap the in-memory capture — display-side truncation does
+        # not bound the buffer, so a chatty/broken upstream could OOM the
+        # proxy. The tty copy below stays untruncated for live debugging.
+        chunks: list[str] = []
+        total = 0
         assert process.stderr, "Opened process is missing stderr"
         try:
             async for chunk in TextReceiveStream(
@@ -222,7 +228,12 @@ async def _stdio_client_piped_stderr_capture(
                 encoding=params.encoding,
                 errors=params.encoding_error_handler,
             ):
-                capture.write(chunk)
+                if total < _STDERR_CAPTURE_CAP_CHARS:
+                    keep = chunk[: _STDERR_CAPTURE_CAP_CHARS - total]
+                    chunks.append(keep)
+                    if len(keep) < len(chunk):
+                        chunks.append("\n… (stderr capture capped) …\n")
+                    total += len(keep)
                 sys.stderr.write(chunk)
                 sys.stderr.flush()
         except (
@@ -231,7 +242,7 @@ async def _stdio_client_piped_stderr_capture(
         ):  # pragma: no cover
             await anyio.lowlevel.checkpoint()
         finally:
-            stderr_sink[:] = [capture.getvalue()]
+            stderr_sink[:] = ["".join(chunks)]
 
     async with anyio.create_task_group() as tg, process:
         tg.start_soon(stdout_reader)
@@ -373,7 +384,10 @@ async def _run_inspect_simple_jsonrpc_post(
             raise _SimplePostUnsupported(msg)
         return data.get("result")
 
-    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+    # Audit INFO item: the fallback used to spend the full 60 s budget, which
+    # could starve the primary SDK attempt inside the outer wait_for. Keep it
+    # short — a healthy endpoint answers list/tools in well under this.
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         if kind == "capabilities":
             init_result = await post_json(
                 client,

@@ -9,8 +9,9 @@ regardless.
 
 ``run_process`` mirrors ``subprocess.run`` but watches a caller-supplied
 ``threading.Event`` and, when it fires, terminates the child's whole process
-group (the child is spawned in its own session). Without an event it degrades
-to a plain ``subprocess.run``.
+group (the child is spawned in its own session). Without an event it still
+runs through ``Popen`` in its own session so the timeout path kills the tree.
+The child never inherits ``os.environ`` — see :func:`build_child_env`.
 """
 
 from __future__ import annotations
@@ -23,6 +24,30 @@ import time
 
 _KILL_GRACE_S = 2.0
 _POLL_S = 0.05
+
+# Audit SEC-2: install children (npm/pip/git lifecycle code executes arbitrary
+# package scripts) must not inherit the proxy's secrets (admin password,
+# bearer/PEPPER env, upstream server env). Allow-list mirrors the MCP SDK's
+# ``get_default_environment`` plus what npm/pip genuinely need to run.
+_CHILD_ENV_ALLOWLIST: tuple[str, ...] = (
+    "HOME",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "USER",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+)
+
+
+def build_child_env() -> dict[str, str]:
+    """Minimal environment for spawned install processes (never os.environ)."""
+    env = {k: v for k, v in os.environ.items() if k in _CHILD_ENV_ALLOWLIST}
+    env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    env.setdefault("TMPDIR", "/tmp")
+    return env
 
 
 class InstallCancelled(RuntimeError):
@@ -69,20 +94,22 @@ def run_process(
     When ``cancel_event`` is set while the child runs, the child's process
     group is terminated and :class:`InstallCancelled` is raised. Timeouts
     behave like ``subprocess.run`` (tree killed, ``TimeoutExpired`` raised).
-    """
-    if cancel_event is None:
-        return subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout_s, **popen_kwargs
-        )
 
+    The child gets :func:`build_child_env` unless the caller passes an
+    explicit ``env`` (audit SEC-2), and always runs through ``Popen`` with
+    its own session so the timeout path can kill the whole process tree
+    even without a cancel event (audit L-3).
+    """
     popen_kwargs.setdefault("stdout", subprocess.PIPE)
     popen_kwargs.setdefault("stderr", subprocess.PIPE)
     popen_kwargs.setdefault("text", True)
+    popen_kwargs.setdefault("env", build_child_env())
     if os.name == "posix":
         popen_kwargs.setdefault("start_new_session", True)
     proc = subprocess.Popen(argv, **popen_kwargs)
 
     killed = False
+    watcher = None
 
     def _watch() -> None:
         nonlocal killed
@@ -93,17 +120,19 @@ def run_process(
                 break
             time.sleep(_POLL_S)
 
-    watcher = threading.Thread(
-        target=_watch, name=f"proc-cancel-{proc.pid}", daemon=True
-    )
-    watcher.start()
+    if cancel_event is not None:
+        watcher = threading.Thread(
+            target=_watch, name=f"proc-cancel-{proc.pid}", daemon=True
+        )
+        watcher.start()
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         _terminate_group(proc)
         raise
     finally:
-        watcher.join(timeout=_KILL_GRACE_S + 1.0)
+        if watcher is not None:
+            watcher.join(timeout=_KILL_GRACE_S + 1.0)
     if killed:
         raise InstallCancelled(
             f"install interrupted; {argv[0] if argv else 'child'} was terminated"

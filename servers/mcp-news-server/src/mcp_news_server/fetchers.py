@@ -17,6 +17,7 @@ from mcp_news_server.http_util import (
     limited_get,
 )
 from mcp_news_server.models import FeedEntry, NewsItem
+from mcp_news_server.url_guard import assert_safe_public_url
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +117,11 @@ async def fetch_rss_via_http(
 ) -> list[NewsItem]:
     """Fetch feed XML then parse (works better with custom headers and redirects)."""
 
+    # Audit SEC-4: add-time validation is stale — DNS may have been re-pointed
+    # (TTL 0) or feeds.yaml hand-edited since, so every fetch re-validates the
+    # first hop itself. Redirect hops are guarded in http_util.
+    await asyncio.to_thread(assert_safe_public_url, feed_url)
+
     def _load_and_parse(content: bytes) -> list[NewsItem]:
         parsed = feedparser.parse(content)
         if getattr(parsed, "bozo", False) and not getattr(parsed, "entries", None):
@@ -186,6 +192,8 @@ def _extract_og(html: str) -> tuple[str | None, str | None]:
 
 
 async def fetch_page_metadata(client: httpx.AsyncClient, page_url: str) -> NewsItem:
+    # Audit SEC-4: same first-hop re-validation as fetch_rss_via_http.
+    await asyncio.to_thread(assert_safe_public_url, page_url)
     r = await limited_get(client, page_url)
     html = r.text
     t, d = _extract_og(html)

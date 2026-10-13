@@ -6,6 +6,10 @@ name: Deploy (SSH, manual)
 on:
   workflow_dispatch:
 
+# Audit M-10: least-privilege token; this job only runs a remote script.
+permissions:
+  contents: read
+
 jobs:
   ssh-deploy:
     runs-on: ubuntu-latest
@@ -17,8 +21,9 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          if [ -n "${DEPLOY_HOST}" ] && [ -n "${DEPLOY_SSH_KEY}" ] && [ -n "${DEPLOY_PATH}" ]; then
+          if [ -n "${DEPLOY_HOST}" ] && [ -n "${DEPLOY_SSH_KEY}" ] && [ -n "${DEPLOY_PATH}" ] && [ -n "${DEPLOY_USER}" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -26,14 +31,18 @@ jobs:
 
       - name: Remote git pull + docker compose build
         if: steps.secrets_ok.outputs.ready == 'true'
-        uses: appleboy/ssh-action@v1.2.0
+        # Audit M-10: pinned by commit SHA (v1.2.0), not a mutable tag — a
+        # moved tag would run attacker code on a runner holding prod SSH keys.
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           DEPLOY_BRANCH: ${{ secrets.DEPLOY_BRANCH }}
           COMPOSE_FILE: ${{ secrets.DEPLOY_COMPOSE_FILE }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER || 'root' }}
+          # Audit M-10: no root fallback — DEPLOY_USER must be an unprivileged
+          # account in the `docker` group.
+          username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: DEPLOY_PATH,DEPLOY_BRANCH,COMPOSE_FILE
           script_stop: true
@@ -51,5 +60,5 @@ jobs:
       - name: Missing SSH secrets
         if: steps.secrets_ok.outputs.ready != 'true'
         run: |
-          echo "::error::Set secrets DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH (optional DEPLOY_USER, DEPLOY_BRANCH, DEPLOY_COMPOSE_FILE)."
+          echo "::error::Set secrets DEPLOY_HOST, DEPLOY_SSH_KEY, DEPLOY_PATH, DEPLOY_USER (unprivileged, in the `docker` group; optional DEPLOY_BRANCH, DEPLOY_COMPOSE_FILE)."
           exit 1

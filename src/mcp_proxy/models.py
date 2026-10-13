@@ -117,7 +117,8 @@ class UpstreamServer(BaseModel):
         default=False,
         description=(
             "stdio only: if True and the executable is node, spawn with "
-            "--inspect=0.0.0.0:PORT (or --inspect-brk) for Chrome/VS Code attach."
+            "--inspect=HOST:PORT (or --inspect-brk) for Chrome/VS Code attach. "
+            "HOST is MCP_PROXY_NODE_INSPECT_HOST (default 127.0.0.1)."
         ),
     )
     stdio_node_inspect_brk: bool = Field(

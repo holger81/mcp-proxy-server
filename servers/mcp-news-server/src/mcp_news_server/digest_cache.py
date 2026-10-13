@@ -11,7 +11,7 @@ from typing import Any
 from mcp_news_server.dedupe import dedupe_news_items
 from mcp_news_server.feed_regions import feeds_bay_area, feeds_germany, feeds_today_world
 from mcp_news_server.fetchers import gather_rss_for_feeds
-from mcp_news_server.http_util import async_client
+from mcp_news_server.http_util import async_client, classify_error
 from mcp_news_server.llm_curator import maybe_curate_digest_payload
 from mcp_news_server.models import FeedEntry, NewsItem
 from mcp_news_server.store import FeedStore
@@ -132,13 +132,18 @@ class DigestCache:
             return self._germany_payload
         return self._local_payload
 
-    def _store_payload(self, digest: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _store_payload(
+        self, digest: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         """Persist payload, but keep a good digest on a total refresh failure.
 
         When the new payload has zero items while the previous one had items
         (all feeds down, DNS failure, parse errors, ...), the previous digest
         keeps serving and only the fresh error list is attached. A transient
         upstream outage must never blank the cache.
+
+        Disk writes run off the event loop (audit M-5: YAML/JSON IO used to
+        block the single-threaded stdio server).
         """
         prev = self._payload_for_digest(digest)
         if payload.get("itemCount", 0) == 0 and prev.get("itemCount", 0) > 0:
@@ -150,9 +155,9 @@ class DigestCache:
             )
             kept = dict(prev)
             kept["errors"] = payload.get("errors", [])
-            self._write_disk(_path_for_digest(self, digest), kept)
+            await asyncio.to_thread(self._write_disk, _path_for_digest(self, digest), kept)
             return kept
-        self._write_disk(_path_for_digest(self, digest), payload)
+        await asyncio.to_thread(self._write_disk, _path_for_digest(self, digest), payload)
         return payload
 
     def snapshot_today(self) -> dict[str, Any]:
@@ -183,15 +188,18 @@ class DigestCache:
             await self._refresh_local_unlocked()
 
     async def _refresh_today_unlocked(self) -> None:
-        feeds = feeds_today_world(self._store.load())
+        doc = await asyncio.to_thread(self._store.load)
+        feeds = feeds_today_world(doc)
         self._today_payload = await self._build_payload("today", feeds)
 
     async def _refresh_germany_unlocked(self) -> None:
-        feeds = feeds_germany(self._store.load())
+        doc = await asyncio.to_thread(self._store.load)
+        feeds = feeds_germany(doc)
         self._germany_payload = await self._build_payload("germany", feeds)
 
     async def _refresh_local_unlocked(self) -> None:
-        feeds = feeds_bay_area(self._store.load())
+        doc = await asyncio.to_thread(self._store.load)
+        feeds = feeds_bay_area(doc)
         self._local_payload = await self._build_payload("local", feeds)
 
     async def _build_payload(
@@ -210,7 +218,7 @@ class DigestCache:
                 }
             )
             pl = _finalize_payload([], errors, digest, max_total, min_fp, feed_count=0)
-            return self._store_payload(digest, pl)
+            return await self._store_payload(digest, pl)
 
         async with async_client() as client:
             merged = await gather_rss_for_feeds(
@@ -238,10 +246,15 @@ class DigestCache:
                                 categories=cats,
                             )
                         except Exception as e:
+                            # Audit SEC-5: raw strings (e.g. httpx.HTTPStatusError)
+                            # embed the internal SearXNG host/port/query and were
+                            # persisted into the cached payload served to every
+                            # client — error-class-only like every other surface.
+                            log.warning("local searx query %r failed: %s", q, e)
                             errors.append(
                                 {
                                     "source": f"searx:{q}",
-                                    "error": str(e) or type(e).__name__,
+                                    "error": classify_error(e),
                                 }
                             )
                             return []
@@ -257,7 +270,7 @@ class DigestCache:
             # the `async with` used to hit a closed client (curator never worked).
             pl = await maybe_curate_digest_payload(pl, digest=digest, client=client)
 
-        return self._store_payload(digest, pl)
+        return await self._store_payload(digest, pl)
 
     async def run_periodic_refresh(self) -> None:
         interval = _refresh_interval_s()

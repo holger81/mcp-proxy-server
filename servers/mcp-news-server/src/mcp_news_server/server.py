@@ -495,7 +495,8 @@ def build_news_server() -> Server:
         args = arguments or {}
 
         if name == "news_list_feeds":
-            feeds = store.load()
+            # Audit M-5: store IO (YAML read/write) must not block the loop.
+            feeds = await asyncio.to_thread(store.load)
             payload = {
                 "dataDir": str(default_data_dir()),
                 "feeds": [f.to_json_dict() for f in feeds],
@@ -507,21 +508,25 @@ def build_news_server() -> Server:
             if not isinstance(url, str) or not url.strip():
                 raise _err("Missing or invalid 'url'.")
             try:
-                assert_safe_public_url(url.strip())
+                await asyncio.to_thread(assert_safe_public_url, url.strip())
             except UrlBlockedError as e:
-                raise _err(f"URL rejected by SSRF guard: {e}") from None
+                # Audit L-11: detailed rejections ("does not resolve" vs
+                # "blocked internal address") were an internal-DNS oracle for
+                # MCP clients; the detail belongs in the server log only.
+                log.warning("feed URL rejected for %s: %s", url, e)
+                raise _err("URL rejected by safety guard.") from None
             label = args.get("label")
             lab = str(label).strip() if isinstance(label, str) else ""
-            store.add(url.strip(), lab)
-            feeds = store.load()
+            await asyncio.to_thread(store.add, url.strip(), lab)
+            feeds = await asyncio.to_thread(store.load)
             return _json_text({"ok": True, "feeds": [f.to_json_dict() for f in feeds]})
 
         if name == "news_remove_rss_feed":
             url = args.get("url")
             if not isinstance(url, str) or not url.strip():
                 raise _err("Missing or invalid 'url'.")
-            before = len(store.load())
-            feeds = store.remove(url.strip())
+            before = len(await asyncio.to_thread(store.load))
+            feeds = await asyncio.to_thread(store.remove, url.strip())
             removed = len(feeds) < before
             return _json_text(
                 {"ok": True, "removed": removed, "feeds": [f.to_json_dict() for f in feeds]}
@@ -542,18 +547,27 @@ def build_news_server() -> Server:
             base_param = _optional_str(args, "searx_base_url")
             if base_param:
                 try:
-                    assert_safe_public_url(base_param)
+                    await asyncio.to_thread(assert_safe_public_url, base_param)
                 except UrlBlockedError as e:
-                    raise _err(f"searx_base_url rejected by SSRF guard: {e}") from None
+                    log.warning("searx_base_url rejected for %s: %s", base_param, e)
+                    raise _err("searx_base_url rejected by safety guard.") from None
             base = base_param or _searx_base_from_env()
             if not base:
                 raise _err(
                     "Set `searx_base_url` or environment variable `SEARXNG_BASE_URL`."
                 )
             async with async_client() as client:
-                items = await searx_search(
-                    client, base, q.strip(), limit=limit, categories=categories
-                )
+                try:
+                    items = await searx_search(
+                        client, base, q.strip(), limit=limit, categories=categories
+                    )
+                except Exception as e:
+                    # Audit L-10: unhandled errors (e.g. JSONDecodeError when
+                    # SearXNG answers with an HTML error page) were echoed
+                    # verbatim by the SDK tool wrapper — internal base URL and
+                    # all. In-band gets only the stable error class.
+                    log.warning("searx query %r failed: %s", q, e)
+                    raise _err(f"SearXNG search failed: {classify_error(e)}.") from None
             return _json_text(
                 {"query": q.strip(), "items": [i.to_json_dict() for i in items]}
             )
@@ -570,12 +584,10 @@ def build_news_server() -> Server:
             async with async_client() as client:
 
                 async def one(u: str) -> NewsItem | None:
-                    try:
-                        assert_safe_public_url(u)
-                    except UrlBlockedError as e:
-                        log.warning("ingest URL blocked for %s: %s", u, e)
-                        errors.append({"url": u, "error": "url_blocked"})
-                        return None
+                    # The first-hop guard now lives inside fetch_page_metadata
+                    # (audit SEC-4); UrlBlockedError still classifies as
+                    # "url_blocked" below and DNS no longer blocks the loop
+                    # (audit M-5).
                     try:
                         return await fetch_page_metadata(client, u)
                     except Exception as e:
@@ -657,6 +669,10 @@ def build_news_server() -> Server:
             extra_urls = _str_list(args, "extra_urls")
             if len(extra_urls) > 40:
                 raise _err("At most 40 extra_urls.")
+            if len(searx_queries) > 40:
+                # Audit L-8: uncapped query fan-out was a self-DoS against the
+                # operator's SearXNG instance (extra_urls was already capped).
+                raise _err("At most 40 searx_queries.")
             include_disabled = _bool(args, "include_disabled_feeds", False)
             dedupe = _bool(args, "deduplicate", True)
             urls_only = _bool(args, "dedupe_urls_only", False)
@@ -665,14 +681,17 @@ def build_news_server() -> Server:
             searx_base_param = _optional_str(args, "searx_base_url")
             if searx_base_param:
                 try:
-                    assert_safe_public_url(searx_base_param)
+                    await asyncio.to_thread(assert_safe_public_url, searx_base_param)
                 except UrlBlockedError as e:
-                    raise _err(f"searx_base_url rejected by SSRF guard: {e}") from None
+                    log.warning(
+                        "searx_base_url rejected for %s: %s", searx_base_param, e
+                    )
+                    raise _err("searx_base_url rejected by safety guard.") from None
             searx_base = searx_base_param or _searx_base_from_env()
             searx_cat = _optional_str(args, "searx_categories")
             scope = _digest_scope(args)
 
-            feeds = store.load()
+            feeds = await asyncio.to_thread(store.load)
             if not include_disabled:
                 feeds = [f for f in feeds if f.enabled]
             feeds = _filter_feeds_for_scope(feeds, scope)
@@ -737,12 +756,8 @@ def build_news_server() -> Server:
                 if extra_urls:
 
                     async def web_one(u: str) -> NewsItem | None:
-                        try:
-                            assert_safe_public_url(u)
-                        except UrlBlockedError as e:
-                            log.warning("extra_url blocked for %s: %s", u, e)
-                            errors.append({"source": u, "error": "url_blocked"})
-                            return None
+                        # Guard moved into fetch_page_metadata (audit SEC-4);
+                        # blocked URLs still classify as "url_blocked".
                         try:
                             return await fetch_page_metadata(client, u)
                         except Exception as e:

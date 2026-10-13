@@ -7,6 +7,10 @@ on:
   push:
   pull_request:
 
+# Audit M-10: least-privilege token (checkout only).
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest

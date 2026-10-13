@@ -84,16 +84,29 @@ async def limited_get(
       past those windows).
 
     If the identity retry also fails, the error propagates unchanged.
+
+    Audit M-6: every attempt additionally runs under the overall wall-clock
+    deadline (``NEWS_MCP_FEED_DEADLINE_S``) — not just the RSS refresh path
+    that already wraps itself — so a slow-drip caller-chosen URL or SearXNG
+    cannot hold a tool handler open indefinitely. ``asyncio.TimeoutError``
+    classifies as ``timeout``.
     """
+    deadline = feed_deadline_s()
     try:
-        return await _limited_get_once(client, url, params=params, max_bytes=max_bytes)
+        return await asyncio.wait_for(
+            _limited_get_once(client, url, params=params, max_bytes=max_bytes),
+            timeout=deadline,
+        )
     except httpx.DecodingError:
-        return await _limited_get_once(
-            client,
-            url,
-            params=params,
-            max_bytes=max_bytes,
-            headers={"Accept-Encoding": "identity"},
+        return await asyncio.wait_for(
+            _limited_get_once(
+                client,
+                url,
+                params=params,
+                max_bytes=max_bytes,
+                headers={"Accept-Encoding": "identity"},
+            ),
+            timeout=deadline,
         )
 
 
@@ -119,7 +132,9 @@ async def _limited_get_once(
                 next_url = urljoin(
                     str(response.request.url), response.headers["location"]
                 )
-                assert_safe_public_url(next_url)
+                # Audit M-5: the guard's getaddrinfo() ran on the event loop
+                # for every redirect hop; keep resolution off it.
+                await asyncio.to_thread(assert_safe_public_url, next_url)
                 current_url, current_params = next_url, None
                 continue
             if response.has_redirect_location:

@@ -59,10 +59,20 @@ class Settings(BaseSettings):
     propagate_tool_errors: Annotated[bool, BeforeValidator(_env_bool)] = True
     # PR 38 (external audit): admin tools on /mcp (listServers, setServerEnabled,
     # register*/upgrade*StdioServer, removeServer) require the same ``can_admin``
-    # scope the HTTP admin API has enforced since 4.2. Warn-first (D4): while this
-    # flag is false, clients missing the scope are warned once per tool and still
-    # allowed through; set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to deny now.
-    enforce_mcp_admin_tools: Annotated[bool, BeforeValidator(_env_bool)] = False
+    # scope the HTTP admin API has enforced since 4.2. Warn-first (D4) ended with
+    # the Oct-2026 re-audit: prod logs showed zero warn hits, so enforcement is
+    # the DEFAULT now. Set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=0 to go back to
+    # warn-only (e.g. during a client-migration incident). NOTE: this flag only
+    # gates the admin meta-tools, never the /mcp transport auth itself.
+    enforce_mcp_admin_tools: Annotated[bool, BeforeValidator(_env_bool)] = True
+    # Audit M-12: CORS used to answer every origin with "*". The admin UI is
+    # same-origin; browser MCP clients served from another origin must opt in
+    # here (comma-separated, e.g. "http://localhost:5173,https://ui.example").
+    cors_allow_origins: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
     static_root: Path = Field(default_factory=_default_static_root)
     # When set (non-empty), admin UI + API (except /api/health) require auth.
     admin_password: str = ""

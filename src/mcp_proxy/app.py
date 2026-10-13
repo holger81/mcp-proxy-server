@@ -243,7 +243,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        # Audit M-12: opt-in origins only (MCP_PROXY_CORS_ALLOW_ORIGINS). The
+        # admin UI is same-origin and unaffected; cross-origin browser clients
+        # must declare their origin explicitly.
+        allow_origins=settings.cors_origin_list,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
