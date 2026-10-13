@@ -11,7 +11,8 @@ Static analysis guard (no JS runtime in CI):
   and covers ``insertAdjacentHTML``;
 - for ``+`` concatenations every operand must be a literal, a constant, or an
   ``esc()``/primitive-wrapper call — one ``esc(`` no longer launders the whole
-  statement (property accesses outside ``esc(...)`` spans fail);
+  statement (property accesses outside ``esc(...)`` spans fail); ternary
+  *conditions* are boolean guards, not emitted HTML, so they are excluded;
 - every ``${expr}`` inside an HTML sink must be ``esc()``-wrapped or a
   constant;
 - raw scan for the remaining sinks: ``insertAdjacentHTML``, ``outerHTML``,
@@ -134,6 +135,62 @@ def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
     return any(a <= pos < b for a, b in spans)
 
 
+def _strip_range(stmt: str, a: int, b: int) -> tuple[int, int]:
+    while a < b and stmt[a].isspace():
+        a += 1
+    while b > a and stmt[b - 1].isspace():
+        b -= 1
+    return a, b
+
+
+def _property_checks(stmt: str, s: int, e: int) -> list[tuple[int, int]]:
+    """Ranges of an HTML-sink statement whose values are *emitted*.
+
+    Splits on top-level ``+``, descends fully-parenthesised operands and
+    skips ternary conditions — a guard like ``(t.domain ? esc(t.domain) :
+    "")`` emits only the two arms, never the tested property (M-11 keeps
+    its teeth on every operand that actually reaches the sink).
+    """
+    s, e = _strip_range(stmt, s, e)
+    while s < e and stmt[s] == "(" and _balanced_region(stmt, s, "(", ")") == e:
+        s, e = _strip_range(stmt, s + 1, e - 1)
+    parts: list[tuple[int, int]] = []
+    split = False
+    depth = 0
+    pending_q = -1
+    last = s
+    i = s
+    while i < e:
+        c = stmt[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0:
+            if c == "?" and stmt[i + 1 : i + 2] != ".":
+                if pending_q == -1:
+                    pending_q = i
+                    last = i + 1  # condition = dropped segment, not an operand
+            elif c == "+":
+                parts.append((last, i))
+                last = i + 1
+                split = True
+            elif c == ":" and pending_q != -1:
+                parts += _property_checks(stmt, last, i)  # consequent arm
+                last = i + 1
+                pending_q = -1
+                split = True
+        i += 1
+    if pending_q != -1:  # unterminated (e.g. ``??``) -> check conservatively
+        return [(s, e)]
+    if not split:
+        return [(s, e)] if s < e else []
+    out: list[tuple[int, int]] = []
+    for a, b in parts:  # condition ranges were dropped above
+        out += _property_checks(stmt, a, b)
+    return out
+
+
 def _interpolations(stmt: str) -> list[tuple[int, str]]:
     """Top-level ``${expr}`` regions: (start, expr-without-delimiters)."""
     found: list[tuple[int, str]] = []
@@ -154,15 +211,18 @@ def _statement_offenders(base_line: int, code: str, masked: str, stmt_start: int
     spans = _esc_spans(stmt)
 
     if "+" in stmt:
-        # Every property access in a concatenation must sit inside esc(...) —
-        # a single esc() no longer launders the whole statement (M-11 #3).
-        for m in _PROPERTY_ACCESS.finditer(stmt):
-            if not _in_spans(m.start(), spans):
-                line = base_line + code.count("\n", 0, stmt_start)
-                bad.append(
-                    f"line {line}: {label} concat property {m.group(0)!r} "
-                    "outside esc()"
-                )
+        # Every property access that reaches the concatenation must sit
+        # inside esc(...) — a single esc() no longer launders the whole
+        # statement (M-11 #3). Ternary conditions are emitted as booleans,
+        # never as HTML, so they are excluded from the sink operands.
+        for a, b in _property_checks(stmt, 0, len(stmt)):
+            for m in _PROPERTY_ACCESS.finditer(stmt, a, b):
+                if not _in_spans(m.start(), spans):
+                    line = base_line + code.count("\n", 0, stmt_start + m.start())
+                    bad.append(
+                        f"line {line}: {label} concat property {m.group(0)!r} "
+                        "outside esc()"
+                    )
 
     for pos, expr in _interpolations(stmt):
         e = expr.strip()

@@ -280,12 +280,14 @@ def test_put_restores_masked_sentinels_from_store() -> None:
     stored = UpstreamServer(
         id="srv",
         type="stdio",
+        command=["x"],
         env={"TOKEN": "real"},
         headers={"H": "keep-me"},
     )
     body = UpstreamServer(
         id="srv",
         type="stdio",
+        command=["x"],
         env={"TOKEN": "********", "NEW": "plain"},
         headers={"H": "********"},
     )
@@ -296,15 +298,21 @@ def test_put_restores_masked_sentinels_from_store() -> None:
 
 
 def test_put_restore_leaves_session_payload_alone() -> None:
-    stored = UpstreamServer(id="srv", type="stdio", env={"TOKEN": "real"})
-    body = UpstreamServer(id="srv", type="stdio", env={"TOKEN": "********"})
+    stored = UpstreamServer(
+        id="srv", type="stdio", command=["x"], env={"TOKEN": "real"}
+    )
+    body = UpstreamServer(
+        id="srv", type="stdio", command=["x"], env={"TOKEN": "********"}
+    )
     req = _req(session_admin=True, store=_FakeServerStore(stored))
     merged = _restore_masked_fields(req, body)
     assert merged.env == {"TOKEN": "********"}  # session sends real values; no restore
 
 
 def test_put_restore_unknown_server_is_passthrough() -> None:
-    body = UpstreamServer(id="fresh", type="stdio", env={"TOKEN": "********"})
+    body = UpstreamServer(
+        id="fresh", type="stdio", command=["x"], env={"TOKEN": "********"}
+    )
     req = _req(bearer="t", store=_FakeServerStore(None))
     merged = _restore_masked_fields(req, body)
     assert merged.env == {"TOKEN": "********"}
