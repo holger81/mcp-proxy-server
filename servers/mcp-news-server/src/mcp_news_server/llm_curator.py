@@ -17,11 +17,13 @@ _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
-# C0/C1 control chars (keep \t \n \r for layout), DEL, zero-width/bidi marks,
-# and the Unicode "tag" block — all common invisible-injection payloads.
+# C0/C1 control chars (keep \t \n \r for layout), DEL, zero-width/bidi marks
+# and bidi isolates (U+2066–U+2069, audit L-13: Trojan-Source reversible via
+# RLI/FSI inside feed headlines), and the Unicode "tag" block — all common
+# invisible-injection payloads.
 _CONTROL_RE = re.compile(
-    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\ufeff"
-    r"\U000e0000-\U000e007f]"
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069"
+    r"\ufeff\U000e0000-\U000e007f]"
 )
 # Feed text must not be able to forge our untrusted-content fences.
 _FENCE_TOKEN_RE = re.compile(r"(?i)<<<item-\d+|item-\d+>>>")

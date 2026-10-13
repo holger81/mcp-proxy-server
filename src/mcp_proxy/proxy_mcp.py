@@ -139,6 +139,22 @@ def _deny_mcp_admin_tool(name: str) -> None:
     )
 
 
+def _response_cache_owner() -> str:
+    """Owner key for pagination cache entries (audit L-16).
+
+    Bearer clients bind by id; admin-UI sessions and auth-disabled callers
+    each form one trust domain (``__session__`` / ``__anon__``). Replaying a
+    responseCacheId created by a different owner is a cache miss — cached
+    upstream bodies may contain data that caller was never entitled to see.
+    """
+    client = resolve_current_api_client()
+    if client is not None:
+        return client.id
+    if resolve_current_mcp_admin_session():
+        return "__session__"
+    return "__anon__"
+
+
 def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
     """PR 38: /mcp admin tools require ``can_admin`` or an admin UI session.
 
@@ -148,7 +164,8 @@ def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
     - Auth disabled (no bound client, no admin session) → allow (single-user).
     - Auth enabled + unbound identity → deny when enforcing (fail closed;
       never treat a missing bind as "auth off").
-    Warn-first per D4 while ``enforce_mcp_admin_tools`` is false.
+    Warn-first per D4 while ``enforce_mcp_admin_tools`` is false; the flag
+    defaults to true since the Oct-2026 re-audit (prod warn-log showed 0 hits).
     """
     if name not in _ADMIN_TOOL_NAMES:
         return
@@ -169,8 +186,9 @@ def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
             _warned_mcp_admin_calls.add(key)
             log.warning(
                 "Unbound /mcp request called proxy admin tool %r while auth is "
-                "enabled. Denying once enforce is on; check bearer bind / admin "
-                "session. Set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to enforce now.",
+                "enabled. Denying because enforcement is on; check bearer bind / "
+                "admin session. Set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=0 to go "
+                "back to warn-only.",
                 name,
             )
         return
@@ -181,9 +199,9 @@ def _assert_mcp_admin_allowed(name: str, settings: Settings) -> None:
         _warned_mcp_admin_calls.add(key)
         log.warning(
             "MCP client %r called proxy admin tool %r without the can_admin "
-            "scope. The HTTP admin API already requires it; a future release "
-            "will deny this call on /mcp too. Grant the scope or set "
-            "MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1 to enforce now.",
+            "scope. The HTTP admin API already requires it; enforcement on /mcp "
+            "is the default now (set MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=0 to go "
+            "back to warn-only). Grant the scope to keep this call working.",
             client.id,
             name,
         )
@@ -564,6 +582,29 @@ async def _as_hot_call_tool_args(
         wire,
         declared,
     )
+
+
+async def _declared_params_for_composite(
+    store: ServerConfigStore,
+    settings: Settings,
+    composite: str,
+    tool_cache: UpstreamToolListCache | None = None,
+) -> frozenset[str]:
+    """Upstream inputSchema properties for a composite tool name (PR 5.5).
+
+    The *direct* callTool path (client invokes callTool with a toolName) has
+    no hot-shortcut rewrite, so without this lookup an upstream parameter
+    named ``responseOffset/…`` inside ``arguments`` would be peeled as a proxy
+    pagination field (audit M-1). Best-effort: any lookup miss or upstream
+    error degrades to no protection (the pre-5.5 behaviour) instead of
+    blocking the call.
+    """
+    outcome, row = await _lookup_tool_row(store, settings, composite, tool_cache)
+    if outcome is not ToolRowOutcome.FOUND or not isinstance(row, dict):
+        return frozenset()
+    schema = row.get("inputSchema")
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    return frozenset(props) if isinstance(props, dict) else frozenset()
 
 
 def _hot_tool_from_row(row: dict[str, Any]) -> mcp_types.Tool:
@@ -1365,7 +1406,7 @@ def build_proxy_mcp_server(
         name: str, arguments: dict | None
     ) -> list[mcp_types.ContentBlock]:
         args = arguments or {}
-        name, args, hot_wire, _declared = await _as_hot_call_tool_args(
+        name, args, hot_wire, declared = await _as_hot_call_tool_args(
             name, args, store, settings, stats_store, tool_cache
         )
         display_tool = hot_wire or (
@@ -1381,19 +1422,29 @@ def build_proxy_mcp_server(
             tool_name=display_tool,
             arguments=args if isinstance(args, dict) else None,
         ):
-            return await _call_tool_impl(name, args)
+            return await _call_tool_impl(name, args, declared_params=declared)
 
     async def _call_tool_impl(
-        name: str, arguments: dict | None
+        name: str,
+        arguments: dict | None,
+        *,
+        declared_params: frozenset[str] | None = None,
     ) -> list[mcp_types.ContentBlock]:
         eff = _effective_settings(settings)
         disabled = _disabled_for_request()
         args = arguments or {}
-        name, args, hot_wire, declared_params = await _as_hot_call_tool_args(
-            name, args, store, settings, stats_store, tool_cache
-        )
-        if hot_wire is not None:
-            assert_tool_allowed(hot_wire, disabled)
+        if declared_params is None:
+            name, args, hot_wire, declared_params = await _as_hot_call_tool_args(
+                name, args, store, settings, stats_store, tool_cache
+            )
+            if hot_wire is not None:
+                assert_tool_allowed(hot_wire, disabled)
+        # else: the decorated call_tool already resolved (and policy-checked)
+        # the hot shortcut. Re-running the rewrite here is impossible anyway —
+        # the rewritten name "callTool" never matches hot stats — and dropping
+        # the set discarded the upstream schema knowledge, letting a legit
+        # upstream `responseOffset/…` argument be peeled as a proxy field
+        # (audit M-1, completes PR 5.5).
 
         assert_tool_allowed(name, disabled)
         _assert_mcp_admin_allowed(name, settings)
@@ -1600,13 +1651,21 @@ def build_proxy_mcp_server(
                         message="'arguments' must be a JSON object when provided.",
                     )
                 )
+            composite_key = tool_name.strip()
+            cache_owner = _response_cache_owner()
+            if not declared_params:
+                # Direct callTool: recover the upstream schema so its own
+                # responseOffset/responseLimit/responseCacheId parameters
+                # survive the legacy peel (audit M-1).
+                declared_params = await _declared_params_for_composite(
+                    store, settings, composite_key, tool_cache
+                )
             tool_args, pagination = parse_call_tool_pagination(
                 args, eff, declared_params=declared_params
             )
-            composite_key = tool_name.strip()
             assert_tool_allowed(composite_key, disabled)
             if pagination.cache_id:
-                entry = response_cache.get(pagination.cache_id)
+                entry = response_cache.get(pagination.cache_id, owner=cache_owner)
                 if entry is None:
                     raise McpError(
                         mcp_types.ErrorData(
@@ -1635,6 +1694,7 @@ def build_proxy_mcp_server(
                     cache=response_cache,
                     tool_name=composite_key,
                     pagination=pagination,
+                    cache_owner=cache_owner,
                 )
             upstream = store.get(sid)
             if upstream is None or not upstream.enabled:
@@ -1712,6 +1772,7 @@ def build_proxy_mcp_server(
                 cache=response_cache,
                 tool_name=composite_key,
                 pagination=pagination,
+                cache_owner=cache_owner,
             )
             # PR 5.2a: with MCP_PROXY_PROPAGATE_TOOL_ERRORS=true keep the
             # upstream isError flag + structuredContent; default keeps today's

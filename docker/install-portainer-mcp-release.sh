@@ -52,6 +52,20 @@ if ! curl -fsSL "$URL" -o "$TMP/$ARCHIVE"; then
   exit 1
 fi
 
+# Audit M-9: optional checksum pin (see install-mail-mcp-release.sh). Set
+# PORTAINER_MCP_SHA256 to the sha256 of the release tarball to make a
+# rotated/compromised asset fail the build.
+if [ -n "${PORTAINER_MCP_SHA256:-}" ]; then
+  ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | cut -d' ' -f1)"
+  if [ "$ACTUAL" != "$PORTAINER_MCP_SHA256" ]; then
+    echo "SHA256 mismatch for ${ARCHIVE}: got ${ACTUAL}, expected ${PORTAINER_MCP_SHA256}" >&2
+    exit 1
+  fi
+  echo "SHA256 verified (${ACTUAL})"
+else
+  echo "WARNING: PORTAINER_MCP_SHA256 not set — downloaded binary is unverified" >&2
+fi
+
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
 install -m 0755 "$TMP/portainer-mcp-enhanced" "$DEST/portainer-mcp-enhanced"
 echo "Installed portainer-mcp-enhanced (${TAG}) -> ${DEST}/portainer-mcp-enhanced"

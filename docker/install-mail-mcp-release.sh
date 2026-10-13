@@ -20,6 +20,22 @@ mkdir -p "$DEST" "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 
 curl -fsSL "$URL" -o "$TMP/$ARCHIVE"
+
+# Audit M-9: optional checksum pin. Set MAIL_MCP_SHA256 (build arg in the
+# Dockerfile, or env when running this script by hand) to the sha256 of the
+# release tarball; a rotated/compromised GitHub release asset then fails the
+# build instead of installing straight into the secrets container.
+if [ -n "${MAIL_MCP_SHA256:-}" ]; then
+  ACTUAL="$(sha256sum "$TMP/$ARCHIVE" | cut -d' ' -f1)"
+  if [ "$ACTUAL" != "$MAIL_MCP_SHA256" ]; then
+    echo "SHA256 mismatch for ${ARCHIVE}: got ${ACTUAL}, expected ${MAIL_MCP_SHA256}" >&2
+    exit 1
+  fi
+  echo "SHA256 verified (${ACTUAL})"
+else
+  echo "WARNING: MAIL_MCP_SHA256 not set — downloaded binary is unverified" >&2
+fi
+
 tar -xJf "$TMP/$ARCHIVE" -C "$TMP"
 install -m 0755 "$TMP/mail-mcp-x86_64-unknown-linux-gnu/mail-mcp" "$DEST/mail-mcp"
 echo "Installed mail-mcp (${VERSION}) -> $DEST/mail-mcp"

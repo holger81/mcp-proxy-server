@@ -3,6 +3,10 @@ FROM python:3.12-slim-bookworm
 
 # GitHub release tag for https://github.com/tecnologicachile/mail-mcp (Linux amd64 binary only).
 ARG MAIL_MCP_VERSION=v0.4.5
+# Audit M-9: optional sha256 of the release tarball; when set, the baked
+# binary is verified before extraction (a rotated/compromised release asset
+# then fails the build instead of entering the secrets container).
+ARG MAIL_MCP_SHA256=""
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -52,9 +56,15 @@ RUN mkdir -p /opt/mail-mcp \
       else \
         URL="https://github.com/tecnologicachile/mail-mcp/releases/download/${MAIL_MCP_VERSION}/${ASSET}"; \
       fi \
-      && curl -fsSL "$URL" | tar -xJf - -C /tmp \
+      && curl -fsSL "$URL" -o "/tmp/${ASSET}" \
+      && if [ -n "$MAIL_MCP_SHA256" ]; then \
+           echo "${MAIL_MCP_SHA256}  /tmp/${ASSET}" | sha256sum -c -; \
+         else \
+           echo "WARNING: MAIL_MCP_SHA256 build arg not set - baked mail-mcp binary is unverified"; \
+         fi \
+      && tar -xJf "/tmp/${ASSET}" -C /tmp \
       && install -m 0755 "/tmp/mail-mcp-x86_64-unknown-linux-gnu/mail-mcp" /opt/mail-mcp/mail-mcp \
-      && rm -rf "/tmp/mail-mcp-x86_64-unknown-linux-gnu"; \
+      && rm -rf "/tmp/mail-mcp-x86_64-unknown-linux-gnu" "/tmp/${ASSET}"; \
     else \
       echo "mail-mcp: no GitHub Linux binary for ${ARCH} (upstream ships amd64 only). Use linux/amd64 image or install manually under /data/mail-mcp/." \
         > /opt/mail-mcp/README.txt; \

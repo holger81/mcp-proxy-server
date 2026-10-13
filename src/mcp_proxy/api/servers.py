@@ -21,6 +21,7 @@ from mcp_proxy.npm_install import (
     validate_npm_package_spec,
 )
 from mcp_proxy.pypi_venv import install_into_venv, validate_package_spec
+from mcp_proxy.security import bearer_token, is_admin_session
 from mcp_proxy.stdio_package_meta import (
     get_stdio_meta,
     remove_stdio_meta,
@@ -31,6 +32,49 @@ from mcp_proxy.upstream_inspect import run_inspect_with_timeout, upstream_error_
 router = APIRouter(prefix="/servers", tags=["servers"])
 
 InspectKindParam = Literal["tools", "resources", "prompts", "capabilities"]
+
+# Audit M-2: raw env/header secrets must not be echoed to Bearer API clients —
+# those JSON bodies land verbatim in LLM transcripts. The admin UI (session
+# cookie) still receives real values for its edit dialog; masked values sent
+# back on PUT are restored from the stored record (see _restore_masked_fields).
+_ENV_MASK = "********"
+_SECRET_MAP_FIELDS = ("env", "headers")
+
+
+def _mask_secrets_for_bearer(request: Request, dumped: dict) -> dict:
+    if is_admin_session(request) or bearer_token(request) is None:
+        return dumped
+    for field in _SECRET_MAP_FIELDS:
+        value = dumped.get(field)
+        if isinstance(value, dict):
+            dumped[field] = {
+                k: (_ENV_MASK if str(v) else v) for k, v in value.items()
+            }
+    return dumped
+
+
+def _restore_masked_fields(request: Request, body: UpstreamServer) -> UpstreamServer:
+    """Undo ``********`` round-trips from Bearer clients on PUT (audit M-2).
+
+    A masked value means "unchanged": replace it with the stored secret so a
+    GET → PUT automation cannot wipe real values with the sentinel.
+    """
+    if is_admin_session(request) or bearer_token(request) is None:
+        return body
+    existing = _store(request).get(body.id)
+    if existing is None:
+        return body
+    for field in _SECRET_MAP_FIELDS:
+        incoming = getattr(body, field, None)
+        if not isinstance(incoming, dict):
+            continue
+        saved = getattr(existing, field, None) or {}
+        merged = {
+            k: (saved[k] if v == _ENV_MASK and k in saved else v)
+            for k, v in incoming.items()
+        }
+        setattr(body, field, merged)
+    return body
 
 
 def _store(request: Request) -> ServerConfigStore:
@@ -196,7 +240,10 @@ def _status_from_meta(
 @router.get("")
 async def list_servers(request: Request) -> list[dict]:
     store = _store(request)
-    return [s.model_dump(mode="json") for s in store.list_servers()]
+    return [
+        _mask_secrets_for_bearer(request, s.model_dump(mode="json"))
+        for s in store.list_servers()
+    ]
 
 
 @router.post("", status_code=201)
@@ -207,7 +254,7 @@ async def add_server(request: Request, body: UpstreamServer) -> dict:
         store.add(body)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return body.model_dump(mode="json")
+    return _mask_secrets_for_bearer(request, body.model_dump(mode="json"))
 
 
 class RegisterStdioPackageBody(BaseModel):
@@ -380,7 +427,7 @@ async def register_stdio_package(
         "log": log,
         "suggested_command": suggested_cmd,
         "suggested_argv": suggested_argv,
-        "server": server.model_dump(mode="json"),
+        "server": _mask_secrets_for_bearer(request, server.model_dump(mode="json")),
     }
 
 
@@ -460,17 +507,34 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
             "detail": "Upgrade install failed.",
         }
 
-    if not argv:
-        if not server.command:
+    if argv:
+        # Atomic read-modify-write (PR 5.9 CAS; audit M-3): writing back the
+        # snapshot taken before the install would silently roll back any config
+        # edit made during the (multi-minute) upgrade.
+        def _set_command(current: UpstreamServer) -> UpstreamServer:
+            current.command = argv
+            return current
+
+        try:
+            server = store.update_fields(server_id, _set_command)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail="server not found"
+            ) from None
+    else:
+        # Keep the existing command — but re-read it; it may have been edited
+        # while the installer ran (audit M-3).
+        fresh = store.get(server_id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail="server not found")
+        if not fresh.command:
             return {
                 "ok": False,
                 "upgraded": False,
                 "log": result.log,
                 "detail": "Upgrade succeeded but command could not be determined.",
             }
-    else:
-        server.command = argv
-    store.update(server_id, server)
+        server = fresh
     request.app.state.upstream_tool_cache.invalidate(server_id)  # 6.2
     set_stdio_meta(
         request.app.state.settings.data_dir,
@@ -488,7 +552,7 @@ async def upgrade_stdio_package(request: Request, server_id: str) -> dict:
         "ok": True,
         "upgraded": True,
         "log": result.log,
-        "server": server.model_dump(mode="json"),
+        "server": _mask_secrets_for_bearer(request, server.model_dump(mode="json")),
         "status": status,
     }
 
@@ -511,6 +575,7 @@ async def update_server(request: Request, server_id: str, body: UpstreamServer) 
             detail="JSON id must match the URL path (server id cannot be changed here)",
         )
     _validate_domain(request, body.domain)
+    body = _restore_masked_fields(request, body)  # audit M-2 sentinel round-trip
     store = _store(request)
     try:
         store.update(server_id, body)
@@ -518,7 +583,7 @@ async def update_server(request: Request, server_id: str, body: UpstreamServer) 
         raise HTTPException(status_code=404, detail="server not found") from None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return body.model_dump(mode="json")
+    return _mask_secrets_for_bearer(request, body.model_dump(mode="json"))
 
 
 @router.get("/{server_id}/inspect")

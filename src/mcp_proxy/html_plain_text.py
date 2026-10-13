@@ -50,6 +50,9 @@ _BLOCK_BREAK = frozenset(
 )
 _SKIP = frozenset({"head", "noscript", "script", "style", "template"})
 
+# Audit L-6: hard cap on characters handed to the HTML parser per call.
+_MAX_FEED_CHARS = 2_000_000
+
 
 class _PlainTextHTMLParser(HTMLParser):
     def __init__(self) -> None:
@@ -112,9 +115,13 @@ def html_to_plain_text(raw: str, *, max_chars: int = 0) -> tuple[str, bool]:
 
     parser = _PlainTextHTMLParser()
     try:
-        parser.feed(raw)
+        # Audit L-6: bound parser input (mail HTML can be megabytes; the
+        # output max_chars does not limit mid-parse buffering).
+        parser.feed(raw[:_MAX_FEED_CHARS])
         parser.close()
-        text = html.unescape(parser.text())
+        # convert_charrefs=True already decoded entities; a second
+        # html.unescape here double-decoded (&amp;lt; -> <). Audit L-6.
+        text = parser.text()
     except Exception:
         text = _strip_tags_fallback(raw)
 

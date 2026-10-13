@@ -1,0 +1,18 @@
+# Opt-in debug overrides (audit SEC-3). The base docker-compose.yml no longer
+# publishes the Node.js inspector port; enable it ONLY for a debug session:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+#
+# The mapping is bound to the host's loopback (127.0.0.1) so the
+# unauthenticated DevTools protocol never reaches the LAN. Attach from the
+# host: chrome://inspect or `node inspect 127.0.0.1:9229`. Remove this file
+# from the command (or `compose down`) when done.
+services:
+  mcp-proxy:
+    ports:
+      - "127.0.0.1:9229:9229/tcp"
+    environment:
+      # Port mappings reach the container's routed address, not its loopback,
+      # so the injected --inspect must bind 0.0.0.0 INSIDE the container. The
+      # host-side mapping above keeps DevTools off the LAN.
+      MCP_PROXY_NODE_INSPECT_HOST: "0.0.0.0"

@@ -167,6 +167,11 @@ class LiveBindingStreamableHTTPSessionManager(StreamableHTTPSessionManager):
                 )
             with _bind_mcp_session(transport.mcp_session_id):
                 await transport.handle_request(scope, receive, send)
+            # Audit L-7: a DELETE (or a termination surfaced by this very
+            # request) left the dead transport registered, so the manager kept
+            # routing to — and counting — a terminated session.
+            if transport.is_terminated and transport.mcp_session_id:
+                self._server_instances.pop(transport.mcp_session_id, None)
             return
 
         if request_mcp_session_id is None:

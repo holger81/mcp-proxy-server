@@ -18,6 +18,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Audit M-10: this job only POSTs a webhook — the token needs nothing.
+permissions: {}
+
 jobs:
   webhook:
     runs-on: ubuntu-latest

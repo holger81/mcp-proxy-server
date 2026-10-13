@@ -14,6 +14,9 @@ class CachedToolResponse:
     tool_name: str
     text: str
     created_at: float
+    # Audit L-16: the cached body may carry secrets fetched on behalf of one
+    # caller; ``owner`` (API client id / session sentinel) bounds replay.
+    owner: str | None = None
 
 
 class ToolResponseCache:
@@ -25,12 +28,13 @@ class ToolResponseCache:
         self._lock = Lock()
         self._entries: OrderedDict[str, CachedToolResponse] = OrderedDict()
 
-    def put(self, tool_name: str, text: str) -> str:
+    def put(self, tool_name: str, text: str, *, owner: str | None = None) -> str:
         cache_id = secrets.token_urlsafe(12)
         entry = CachedToolResponse(
             tool_name=tool_name,
             text=text,
             created_at=time.monotonic(),
+            owner=owner,
         )
         with self._lock:
             self._purge_expired_unlocked()
@@ -40,11 +44,18 @@ class ToolResponseCache:
                 self._entries.popitem(last=False)
         return cache_id
 
-    def get(self, cache_id: str) -> CachedToolResponse | None:
+    def get(
+        self, cache_id: str, *, owner: str | None = None
+    ) -> CachedToolResponse | None:
         with self._lock:
             self._purge_expired_unlocked()
             entry = self._entries.get(cache_id)
             if entry is None:
+                return None
+            # Audit L-16: replay by a different owner is a miss (callers
+            # already surface ids as "missing or expired"); ids are random,
+            # but they land in LLM transcripts where leakage must be bounded.
+            if entry.owner != owner:
                 return None
             self._entries.move_to_end(cache_id)
             return entry

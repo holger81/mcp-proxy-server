@@ -66,7 +66,10 @@ class UpstreamToolListCache:
             if time.monotonic() - entry[1] >= self._ttl_s:
                 del self._entries[server.id]
                 return None
-            return entry[2]
+            # Return a copy: callers historically append/sort in place, which
+            # corrupted the internal list despite the "read-only" docstring
+            # (audit M-7).
+            return list(entry[2])
 
     def put(self, server: UpstreamServer, tools: list[Any]) -> None:
         if not self.enabled:

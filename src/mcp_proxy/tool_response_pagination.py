@@ -320,13 +320,19 @@ def paginate_call_tool_response(
     cache: ToolResponseCache,
     tool_name: str,
     pagination: ResponsePaginationRequest,
+    cache_owner: str | None = None,
 ) -> list[mcp_types.ContentBlock]:
+    """Page (and cache) a callTool result.
+
+    ``cache_owner`` binds cache entries to the requesting identity so one
+    client cannot replay another client's responseCacheId (audit L-16).
+    """
     page = _page_size(settings)
     if page <= 0:
         return _truncate_blocks(blocks, settings.call_tool_response_text_max_chars)
 
     if pagination.cache_id:
-        entry = cache.get(pagination.cache_id)
+        entry = cache.get(pagination.cache_id, owner=cache_owner)
         if entry is None:
             raise McpError(
                 mcp_types.ErrorData(
@@ -360,7 +366,7 @@ def paginate_call_tool_response(
             return _truncate_blocks(blocks, hard)
         return blocks
 
-    cache_id = cache.put(tool_name, text)
+    cache_id = cache.put(tool_name, text, owner=cache_owner)
     eff_limit = min(pagination.limit or page, page)
     text_slice = text[:eff_limit]
     payload = _build_page_payload(

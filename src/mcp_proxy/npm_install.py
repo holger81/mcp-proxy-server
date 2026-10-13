@@ -106,7 +106,14 @@ def _package_lock_installed_dir(target: Path, spec: str) -> Path | None:
     if not matches:
         return None
     matches.sort(key=len)
-    return (target / matches[0]).resolve()
+    # Audit L-4: a hostile package-lock.json (tarball installs can ship one)
+    # could carry a "../" key; the build prefix must stay inside target.
+    candidate = (target / matches[0]).resolve()
+    try:
+        candidate.relative_to(target.resolve())
+    except ValueError:
+        return None
+    return candidate
 
 
 def _detect_build_prefix(target: Path, *, guess_bin: str | None = None) -> Path | None:
@@ -437,13 +444,12 @@ def install_npm_prefix(
 
     # GitHub installs often need a build step (dist/ not prepublished), which in turn needs devDependencies.
     # For registry packages we keep the lean install.
-    npm_args = ["npm", "install", "--prefix", str(target)]
+    # Audit SEC-2: lifecycle scripts (preinstall/postinstall/prepare) run arbitrary
+    # package code — they are never allowed implicitly, for registry specs either;
+    # GitHub builds are invoked explicitly below (same scrubbed env).
+    npm_args = ["npm", "install", "--prefix", str(target), "--ignore-scripts"]
     if _is_githubish_install_spec(spec):
         npm_args.append("--include=dev")
-        # GitHub/tarball installs often include a `prepare` script (eg lefthook install)
-        # that expects `git` to exist. This proxy image is intentionally minimal and may
-        # not have git. We run the build explicitly below, so skip lifecycle scripts.
-        npm_args.append("--ignore-scripts")
     npm_args.append(spec)
 
     code, log = _npm_run(npm_args, timeout_s=600, cancel_event=cancel_event)

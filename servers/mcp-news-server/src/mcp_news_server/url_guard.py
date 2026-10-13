@@ -98,9 +98,16 @@ def assert_safe_public_url(url: str) -> None:
         return
 
     try:
+        port = parts.port
+    except ValueError:
+        # Audit L-9: a malformed port ("http://host:abc/") raised a bare
+        # ValueError; callers only catch UrlBlockedError, so the raw text
+        # leaked in-band instead of a stable rejection.
+        raise UrlBlockedError("URL has an invalid port") from None
+    try:
         infos = socket.getaddrinfo(
             host,
-            parts.port or (443 if parts.scheme == "https" else 80),
+            port or (443 if parts.scheme == "https" else 80),
             proto=socket.IPPROTO_TCP,
         )
     except socket.gaierror:

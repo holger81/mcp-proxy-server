@@ -20,6 +20,18 @@ logger = logging.getLogger("mcp_proxy.auth")
 SESSION_ADMIN_KEY = "admin"
 
 
+def is_mcp_http_path(path: str) -> bool:
+    """True for ``/mcp`` and every ``/mcp/...`` sub-path of the MCP mount.
+
+    ``app.mount("/mcp", ...)`` matches all sub-paths and the streamable-HTTP
+    session manager ignores the remaining path entirely — gating only the
+    exact ``/mcp`` spelling would let e.g. ``POST /mcp/x`` reach the MCP
+    server unauthenticated (audit SEC-1). Shared with the live-tracker
+    middleware so the two can never drift apart.
+    """
+    return path == "/mcp" or path.startswith("/mcp/")
+
+
 def _verify_bearer_with_retry(store: ClientTokenStore, token: str) -> bool:
     """Store errors count as *unauthenticated* after one retry (PLAN 4.3).
 
@@ -181,7 +193,9 @@ class AuthEnforcementMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Remote MCP clients use Bearer tokens; browsers would get JSON 401 unless Accept prefers HTML.
-        if path.rstrip("/") == "/mcp":
+        # NOTE (audit SEC-1): Mount("/mcp") also serves /mcp/<anything> and the
+        # session manager ignores the sub-path, so the gate must cover prefixes.
+        if is_mcp_http_path(path):
             # CORS preflight has no Bearer; answer from the app stack (CORSMiddleware + MCP mount).
             if request.method == "OPTIONS":
                 return await call_next(request)

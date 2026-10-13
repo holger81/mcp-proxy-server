@@ -5,8 +5,9 @@ Before this fix, proxy-admin tools (``listServers``, ``setServerEnabled``,
 ``/mcp`` while the HTTP admin API required ``can_admin`` (since 4.2). The gate
 lives at the top of ``_call_tool_impl``, so direct tools/call, the ``callTool``
 composite (``mcp-tools-admin/…`` recurses to the plain name) and hot shortcuts
-are all covered. Warn-first per D4: while ``enforce_mcp_admin_tools`` is false,
-non-admin callers are warned once per (client, tool) and still served. An
+are all covered. Warn-only mode remains configurable; audit M-8 flipped
+the default to enforce, so the warn-mode tests below pass ``enforce=False``
+explicitly. An
 *unbound* client (auth disabled → single-user mode) stays allowed, mirroring
 ``require_admin_api``.
 """
@@ -106,7 +107,7 @@ async def test_non_admin_warn_mode_still_serves(tmp_path, caplog):
         if rec.levelno >= logging.WARNING and "can_admin" in rec.getMessage()
     ]
     assert len(warnings) == 1
-    assert "MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=1" in warnings[0].getMessage()
+    assert "MCP_PROXY_ENFORCE_MCP_ADMIN_TOOLS=0" in warnings[0].getMessage()
 
 
 async def test_warn_once_per_client_and_tool(tmp_path, caplog):

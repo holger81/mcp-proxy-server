@@ -1,5 +1,11 @@
 # Default RSS sources for Docker / first-time setup. Mix of international wires,
 # public broadcasters, and regional outlets; no single feed is perfectly "neutral".
+#
+# NOTE (audit L-12): this file is NOT loaded by the news server itself. The
+# Docker image copies it to /app/mcp-news-default-feeds.yaml and
+# docker/seed_mcp_news.py seeds the FIRST feeds.yaml from it at container
+# startup. pip/stdio installs start with an empty store — add feeds via the
+# proxy admin UI or `news_add_rss_feed` (see README).
 feeds:
   # --- World / international ---
   - url: "https://feeds.bbci.co.uk/news/world/rss.xml"

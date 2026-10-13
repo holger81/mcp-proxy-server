@@ -27,16 +27,22 @@ class LoginRateLimiter:
         window_s: float = 60.0,
         lockout_base_s: float = 60.0,
         lockout_max_s: float = 3600.0,
+        streak_reset_s: float = 900.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.max_attempts = max_attempts
         self.window_s = window_s
         self.lockout_base_s = lockout_base_s
         self.lockout_max_s = lockout_max_s
+        # Audit L-1: streaks must decay, or sporadic old failures (shared NAT,
+        # an unrelated user typoing once a week) accumulate into a permanent
+        # escalating lockout, and the dict never shrinks. The rolling bucket in
+        # hit() still throttles brute force inside the window.
+        self.streak_reset_s = streak_reset_s
         self._clock = clock
         self._lock = threading.Lock()
         self._attempts: dict[str, deque[float]] = {}
-        self._streaks: dict[str, int] = {}
+        self._streaks: dict[str, tuple[int, float]] = {}  # key → (count, last_ts)
         self._lockouts: dict[str, float] = {}  # key → monotonic unlock time
 
     # -- public -------------------------------------------------------------
@@ -61,18 +67,25 @@ class LoginRateLimiter:
                     q.popleft()
                 if len(q) >= self.max_attempts:
                     return math.ceil(q[0] + self.window_s - now)
-            elif len(self._attempts) > 4096:  # bounded worst case
+            elif len(self._attempts) > 4096 or len(self._streaks) > 4096:
                 self._prune_locked(now)
                 q = self._attempts.get(key)
             self._attempts.setdefault(key, deque()).append(now)
             return None
 
     def record_failure(self, key: str) -> None:
-        """Wrong password: escalate consecutive-failure streak → lockout."""
+        """Wrong password: escalate consecutive-failure streak → lockout.
+
+        Failures separated by more than ``streak_reset_s`` start a new
+        streak (audit L-1).
+        """
         now = self._clock()
         with self._lock:
-            streak = self._streaks.get(key, 0) + 1
-            self._streaks[key] = streak
+            if len(self._streaks) > 4096:  # bounded worst case
+                self._prune_streaks_locked(now)
+            prev, last = self._streaks.get(key, (0, 0.0))
+            streak = prev + 1 if (now - last) <= self.streak_reset_s else 1
+            self._streaks[key] = (streak, now)
             if streak >= self.max_attempts:
                 penalty = min(
                     self.lockout_base_s * (2 ** (streak - self.max_attempts)),
@@ -94,3 +107,12 @@ class LoginRateLimiter:
             del self._attempts[k]
         for k in [k for k, u in self._lockouts.items() if u <= now]:
             del self._lockouts[k]
+        self._prune_streaks_locked(now)
+
+    def _prune_streaks_locked(self, now: float) -> None:
+        for k in [
+            k
+            for k, (_, ts) in self._streaks.items()
+            if ts <= now - self.streak_reset_s
+        ]:
+            del self._streaks[k]
