@@ -168,7 +168,7 @@ async def drive_mcp_session(proxy: Proxy) -> None:
             )
             check("callTool legacy spelling round-trips", text_of(res) == "echo:legacy", text_of(res)[:200])
 
-            # Cached paging: response longer than the page size (default 5000)
+            # Cached paging: response longer than the page size (default 25000)
             # is sliced; continuation goes through pagination.responseCacheId.
             long_text = "".join(f"{i % 10}abcdefghij" for i in range(600))  # 6000 chars
             res = await s.call_tool(
