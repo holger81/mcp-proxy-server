@@ -60,6 +60,9 @@ services:
       # Startup is REFUSED when no password is set and the bind is non-loopback.
       # Set true only for a deliberate open deployment (trusted network).
       MCP_PROXY_ALLOW_NO_AUTH: ${MCP_PROXY_ALLOW_NO_AUTH:-false}
+      # Browser MCP clients (llama.cpp web UI) are cross-origin. Empty denies
+      # every Origin (audit M-12). Set * in the Portainer stack env to allow all.
+      MCP_PROXY_CORS_ALLOW_ORIGINS: ${MCP_PROXY_CORS_ALLOW_ORIGINS:-}
       # PR #38: admin tools on /mcp require the client's can_admin scope.
       # Audit M-8: default flipped to ENFORCE (deny without scope); set 0 to
       # return to warn-only. Fresh installs are safe by default.
